@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Sources - RAG Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen bg-gray-100">
+    <nav class="bg-purple-700 text-white px-6 py-4 flex justify-between items-center">
+        <span class="font-semibold text-lg">RAG Admin</span>
+        <div class="space-x-4">
+            <a href="/admin/dashboard.html" class="hover:underline">Dashboard</a>
+            <a href="/admin/datasources.html" class="font-medium">Data Sources</a>
+            <a href="/admin/messages.html" class="hover:underline">Messages</a>
+            <a href="/" class="hover:underline">Chat</a>
+        </div>
+    </nav>
+
+    <main class="p-6">
+        <section class="bg-white rounded-xl shadow p-6 mb-8">
+            <h2 class="text-lg font-medium mb-4">Add New Data Source</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Upload File (.txt / .pdf)</label>
+                    <input id="file-input" type="file" class="border p-2 rounded w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Add Article URL</label>
+                    <div class="flex gap-2">
+                        <input id="url-input" type="url" placeholder="https://example.com"
+                            class="border p-2 rounded w-full" />
+                        <button id="url-btn" class="bg-purple-600 text-white px-4 rounded">Add</button>
+                    </div>
+                </div>
+                <button id="upload-btn" class="bg-purple-600 text-white px-4 py-2 rounded">Upload</button>
+            </div>
+        </section>
+
+        <section>
+            <h2 class="text-lg font-medium mb-4">Existing Sources</h2>
+            <ul id="source-list" class="space-y-2"></ul>
+        </section>
+    </main>
+
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) location.href = '/login';
+
+        function listSources() {
+            fetch('/datasources/', { headers: { Authorization: `Bearer ${token}` } })
+                .then(r => r.json()).then(renderSources);
+        }
+        function renderSources(arr) {
+            const ul = document.getElementById('source-list');
+            ul.innerHTML = '';
+            arr.forEach(s => {
+                const li = document.createElement('li');
+                li.className = 'bg-white p-4 rounded-xl shadow flex justify-between items-center hover:bg-gray-50 transition';
+
+                // Left block with link
+                const left = document.createElement('div');
+                const link = document.createElement('a');
+                link.href = `/datasources/${s.id}/preview`;
+                link.target = '_blank';
+                link.className = 'preview-link font-medium text-purple-700 hover:underline';
+                link.textContent = s.reference;
+                const meta = document.createElement('p');
+                meta.className = 'text-xs text-gray-500';
+                meta.textContent = `${s.source_type} • ${new Date(s.added_at).toLocaleString()}`;
+                left.appendChild(link);
+                left.appendChild(meta);
+
+                // Right buttons
+                const right = document.createElement('div');
+                right.className = 'space-x-2';
+                if (s.last_synced_at) {
+                    right.innerHTML = `<span class="text-green-600 font-semibold">Synced</span><button class="del-btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded" data-id="${s.id}">Delete</button>`;
+                } else {
+                    right.innerHTML = `<button class="sync-btn bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded" data-id="${s.id}">Sync</button><button class="del-btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded" data-id="${s.id}">Delete</button>`;
+                }
+
+                li.appendChild(left);
+                li.appendChild(right);
+                ul.appendChild(li);
+            });
+        }
+
+        document.addEventListener('click', e => {
+            if (e.target.classList.contains('del-btn')) {
+                e.stopPropagation();
+                const id = e.target.dataset.id;
+                fetch(`/datasources/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).then(listSources);
+            }
+            if (e.target.classList.contains('sync-btn')) {
+                e.stopPropagation();
+                const id = e.target.dataset.id;
+                const btn = e.target;
+                fetch(`/datasources/${id}/sync`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+                    .then(r => r.json())
+                    .then(data => {
+                        btn.outerHTML = '<span class="text-green-600 font-semibold">Synced</span>';
+                    });
+            }
+        });
+
+        document.getElementById('upload-btn').addEventListener('click', () => {
+            const f = document.getElementById('file-input');
+            if (f.files.length) {
+                const fd = new FormData(); fd.append('file', f.files[0]);
+                fetch('/datasources/upload', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }).then(() => { f.value = ''; listSources(); });
+            }
+        });
+
+        document.getElementById('url-btn').addEventListener('click', () => {
+            const urlField = document.getElementById('url-input');
+            const url = urlField.value.trim();
+            if (!url) return;
+            fetch('/datasources/add-url', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) }).then(() => { urlField.value = ''; listSources(); });
+        });
+
+        listSources();
+    </script>
+</body>
+
+</html>

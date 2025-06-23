@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - RAG Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen bg-gray-100">
+    <nav class="bg-purple-700 text-white px-6 py-4 flex justify-between items-center">
+        <span class="font-semibold text-lg">RAG Admin</span>
+        <div class="space-x-4">
+            <a href="/admin/dashboard.html" class="font-medium">Dashboard</a>
+            <a href="/admin/datasources.html" class="hover:underline">Data Sources</a>
+            <a href="/admin/messages.html" class="hover:underline">Messages</a>
+            <a href="/" class="hover:underline">Chat</a>
+        </div>
+    </nav>
+    <main class="p-6" id="metrics"></main>
+
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) location.href = '/login';
+
+        function card(title, val) {
+            const c = document.createElement('div');
+            c.className = 'bg-white rounded-xl shadow p-6';
+            c.innerHTML = `<h3 class="text-sm text-gray-500 mb-2">${title}</h3><p class="text-3xl font-semibold text-purple-700">${val}</p>`;
+            return c;
+        }
+        fetch('/metrics', { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.json())
+            .then(d => {
+                const m = document.getElementById('metrics');
+                m.className = 'p-6 grid grid-cols-1 md:grid-cols-3 gap-6';
+                m.appendChild(card('Total Messages', d.messages));
+                m.appendChild(card('Average Latency (ms)', Math.round(d.average_latency_ms || 0)));
+                m.appendChild(card('Data Sources', d.data_sources));
+            });
+    </script>
+</body>
+
+</html>

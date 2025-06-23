@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages - RAG Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen bg-gray-100 p-6">
+    <header class="mb-6 flex justify-between items-center">
+        <h1 class="text-2xl font-semibold">Messages</h1>
+        <nav class="space-x-4">
+            <a href="/admin/dashboard.html" class="text-gray-700">Dashboard</a>
+            <a href="/admin/datasources.html" class="text-gray-700">Data Sources</a>
+            <a href="/admin/messages.html" class="text-purple-600 font-medium">Messages</a>
+        </nav>
+    </header>
+
+    <table class="min-w-full bg-white rounded-xl shadow overflow-hidden">
+        <thead class="bg-purple-600 text-white text-left">
+            <tr>
+                <th class="py-2 px-4">Time</th>
+                <th class="py-2 px-4">Question</th>
+                <th class="py-2 px-4">Answer</th>
+                <th class="py-2 px-4">Latency (ms)</th>
+            </tr>
+        </thead>
+        <tbody id="msg-body"></tbody>
+    </table>
+
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) window.location.href = '/login.html';
+
+        fetch('/messages/', { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.json())
+            .then(render)
+            .catch(() => alert('Failed to load messages'));
+
+        function render(arr) {
+            const tbody = document.getElementById('msg-body');
+            arr.forEach(m => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b';
+                tr.innerHTML = `
+      <td class="py-2 px-4 text-sm">${new Date(m.timestamp).toLocaleString()}</td>
+      <td class="py-2 px-4 text-sm">${m.question}</td>
+      <td class="py-2 px-4 text-sm">${m.answer}</td>
+      <td class="py-2 px-4 text-sm">${m.latency_ms}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+
+</html>
