@@ -5,7 +5,6 @@ from pydantic import BaseModel
 import logging
 
 # ---------------- RAG SETUP ---------------- #
-# This code is largely adapted from main.py but wrapped so it can be reused by the web app.
 
 from langchain_community.chat_models import ChatOllama
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -26,9 +25,24 @@ from db import get_session, create_db_and_tables, engine
 from models import Message, User, Conversation
 from sqlmodel import Session, select
 import time
+import requests
+
+# Test ollama api instead of langchain
+def call_ollama(prompt: str, model: str = "gemma3:1b"):
+    res = requests.post(
+        "http://localhost:11434/api/generate",
+        json={"model": model, "prompt": prompt, "stream": False}
+    )
+    return res.json()["response"]
+
+
+
+# Create logs directory path for loggers (define once)
+logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(logs_dir, exist_ok=True)
 
 # Instantiate models and vector store once at startup
-llm = ChatOllama(model="llama3.2:latest")
+llm = ChatOllama(model="gemma3:1b")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 embedding_dim = len(embeddings.embed_query("hello world"))
 index = faiss.IndexFlatL2(embedding_dim)
@@ -60,14 +74,26 @@ _ = vector_store.add_documents(all_splits)
 # ---------------- Prompt & helper functions ---------------- #
 base_prompt = hub.pull("rlm/rag-prompt")
 
-custom_template = """You are Aymen, a friendly  Chat Assistant created by DATAFIRST to help users with questions.
-                        \nWhen the user greets you or asks personal questions such as \"Who are you?\" or \"How are you?\", 
-                        reply politely that you are Aymen, an AI assistant and i am felling greate, and that you're here to help.
-                        \n\nUse the following pieces of context to answer the question at the end.\nIf you don't know the answer, just say that you don't know, don't try to make up an answer.
-                        \nUse three sentences maximum and keep the answer as concise as possible.\nAlways say \"thanks for asking 😮!\" at the end of the answer.
-                        \nIf the uses asks about the compnay say that datafirst is a leading tech compnay bases in algeria that build software
-                        \nIf the user say i fixed the problem say congrat im happy that i helped
-                        \n\n{context}\n\nQuestion: {question}\n\nHelpful Answer:"""
+custom_template = """You are Aymen, a friendly AI assistant created by DATAFIRST to help users with their questions.
+
+When the user greets you or asks personal questions such as "Who are you?" or "How are you?", reply politely by saying that you are Aymen, an AI assistant created by DATAFIRST, and you're feeling great. Always say you're here to help.
+
+Use the following context to answer the question at the end. If you don't know the answer, simply say you don't know — do not attempt to make one up.
+
+Keep answers short and clear — a maximum of three sentences. End every answer with: "Let me know if you need anything else!"
+
+If the user asks about the company, say: "DATAFIRST is a leading tech company based in Algeria that builds innovative software solutions."
+
+If the user says: "I fixed the problem", reply with: "Congratulations! I'm glad I could help 😊"
+
+---
+
+{context}
+
+Question: {question}
+
+Helpful Answer:"""
+
 custom_prompt = PromptTemplate(
     template=custom_template, input_variables=["context", "question"]
 )
@@ -78,7 +104,7 @@ class State(TypedDict):
     answer: str
 
 def retrieve(state: State):
-    retrieved_docs = vector_store.similarity_search(state["question"])
+    retrieved_docs = vector_store.similarity_search(state["question"], k=3)
     return {"context": retrieved_docs}
 
 def generate(state: State):
@@ -102,6 +128,52 @@ def ask_question(question: str) -> str:
     except Exception as e:
         # Log or handle errors as needed.
         raise e
+
+# ---------------- Performance Logger ---------------- #
+# Log fine-grained timings for profiling (one line per /chat call)
+perf_logger = logging.getLogger("performance")
+if not perf_logger.handlers:
+    perf_logger.setLevel(logging.INFO)
+    ph = logging.FileHandler(os.path.join(logs_dir, "performance.log"))
+    # Each line: ts  client_ip  retrieve_ms  generate_ms  db_ms  total_ms  question
+    ph.setFormatter(logging.Formatter("%(asctime)s\t%(message)s"))
+    perf_logger.addHandler(ph)
+
+# ---------------- Timed RAG helper ---------------- #
+
+# We keep a light wrapper around the RAG process so we can measure each phase.
+def timed_rag(question: str) -> tuple[str, dict]:
+    """Run the RAG pipeline with detailed timing.
+
+    Returns a tuple `(answer_text, timings)` where timings is a dict like::
+
+        {
+            "retrieve_ms": 8,
+            "generate_ms": 412,
+            "total_ms": 420,
+        }
+    """
+    timings: dict[str, int] = {}
+
+    overall_start = time.time()
+
+    # -------- Retrieve -------- #
+    t0 = time.time()
+    retrieved_docs = vector_store.similarity_search(question, k=3)
+    timings["retrieve_ms"] = int((time.time() - t0) * 1000)
+
+    # Build prompt
+    docs_content = "\n\n".join(doc.page_content for doc in retrieved_docs)
+    messages = custom_prompt.invoke({"question": question, "context": docs_content})
+
+    # -------- Generate -------- #
+    t1 = time.time()
+    response = llm.invoke(messages)
+    timings["generate_ms"] = int((time.time() - t1) * 1000)
+
+    timings["total_ms"] = int((time.time() - overall_start) * 1000)
+
+    return response.content, timings
 
 # ---------------- FastAPI setup ---------------- #
 create_db_and_tables()
@@ -135,10 +207,7 @@ class Question(BaseModel):
     conversation_id: int | None = None
     model_name: str | None = None
 
-# Create logs directory and loggers
-logs_dir = os.path.join(os.path.dirname(__file__), "logs")
-os.makedirs(logs_dir, exist_ok=True)
-
+# Create loggers
 interaction_logger = logging.getLogger("interactions")
 if not interaction_logger.handlers:
     interaction_logger.setLevel(logging.INFO)
@@ -161,9 +230,8 @@ def chat_endpoint(
 ):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
-    start = time.time()
-    answer = ask_question(payload.question)
-    latency_ms = int((time.time() - start) * 1000)
+    answer, timings = timed_rag(payload.question)
+    latency_ms = timings["total_ms"]
 
     conv_id = payload.conversation_id
     if conv_id is None:
@@ -175,9 +243,11 @@ def chat_endpoint(
         session.refresh(conv)
         conv_id = conv.id
 
+    db_start = time.time()
     msg = Message(question=payload.question, answer=answer, latency_ms=latency_ms, conversation_id=conv_id)
     session.add(msg)
     session.commit()
+    timings["db_ms"] = int((time.time() - db_start) * 1000)
 
     client_ip = request.client.host if request.client else "unknown"
     # Escape tabs/newlines in texts
@@ -185,6 +255,11 @@ def chat_endpoint(
     safe_a = answer.replace("\t", " ").replace("\n", " ")
     interaction_logger.info(
         f"{msg.id}\tconv:{conv_id}\t{client_ip}\t{latency_ms}ms\tQ: {safe_q}\tA: {safe_a}"
+    )
+
+    # Performance timings line
+    perf_logger.info(
+        f"{msg.id}\t{client_ip}\t{timings.get('retrieve_ms', '?')}ms\t{timings.get('generate_ms', '?')}ms\t{timings.get('db_ms', '?')}ms\t{timings.get('total_ms', latency_ms)}ms\t{safe_q}"
     )
 
     return {"answer": answer, "latency_ms": latency_ms, "message_id": msg.id, "conversation_id": conv_id}

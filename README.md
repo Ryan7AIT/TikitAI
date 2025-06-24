@@ -166,3 +166,13 @@ Lightweight migration logic automatically adds the new column on first run after
 • Each conversation row now shows a ⋮ menu: rename or delete on the fly.  Titles persist server-side and are reflected across sessions.
 
 • Sidebar can be toggled on mobile via the ☰ icon for a roomier chat view. 
+
+
+## 📊 Performance Metrics (v1.5)
+
+The chat UI now shows a "Performance" tab with detailed timing metrics for each `/chat` call.  The backend logs:
+
+```
+message_id  client_ip  retrieve_ms  generate_ms  db_ms  total_ms  question
+```
+
