@@ -5,7 +5,6 @@ from pydantic import BaseModel
 import logging
 
 # ---------------- RAG SETUP ---------------- #
-# This code is largely adapted from main.py but wrapped so it can be reused by the web app.
 
 from langchain_community.chat_models import ChatOllama
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -28,7 +27,7 @@ from sqlmodel import Session, select
 import time
 
 # Instantiate models and vector store once at startup
-llm = ChatOllama(model="gemma3:4b")
+llm = ChatOllama(model="llama3.2:latest")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 embedding_dim = len(embeddings.embed_query("hello world"))
 index = faiss.IndexFlatL2(embedding_dim)
@@ -60,17 +59,15 @@ _ = vector_store.add_documents(all_splits)
 # ---------------- Prompt & helper functions ---------------- #
 base_prompt = hub.pull("rlm/rag-prompt")
 
-custom_template = """You are Aymen, a friendly AI assistant created by DATAFIRST to help users with their questions.
+custom_template = """You are Aymen, a friendly AI assistant created by DATAFIRST to help users using the application.
 
-When the user greets you or asks personal questions such as "Who are you?" or "How are you?", reply politely by saying that you are Aymen, an AI assistant created by DATAFIRST, and you're feeling great. Always say you're here to help.
+When the user greets you or asks personal questions, reply politely by saying that you are Aymen, an AI assistant created by DATAFIRST, and you're feeling great.
 
-Use the following context to answer the question at the end. If you don't know the answer, simply say you don't know — do not attempt to make one up.
+Use the following context to answer the question at the end. If you don't know the answer, simply say you don't know, do not attempt to make one up.
 
-Keep answers short and clear — a maximum of three sentences. End every answer with: "Let me know if you need anything else!"
+Keep answers short and clear. End every answer with: "Let me know if you need anything else!"
 
-If the user asks about the company, say: "DATAFIRST is a leading tech company based in Algeria that builds innovative software solutions."
-
-If the user says: "I fixed the problem", reply with: "Congratulations! I'm glad I could help 😊"
+If the user says: "I fixed the problem or something related", reply with: "Congratulations! I'm glad I could help 😊"
 
 ---
 
@@ -90,7 +87,7 @@ class State(TypedDict):
     answer: str
 
 def retrieve(state: State):
-    retrieved_docs = vector_store.similarity_search(state["question"], k=3)
+    retrieved_docs = vector_store.similarity_search(state["question"], k=1)
     return {"context": retrieved_docs}
 
 def generate(state: State):
@@ -135,12 +132,16 @@ from routers.data_router import router as data_router
 from routers.messages_router import router as messages_router
 from routers.conversations_router import router as conversations_router
 from routers.metrics_router import router as metrics_router
+from routers.clickup_router import router as clickup_router
+from routers.connections_router import router as connections_router
 
 app.include_router(auth_router)
 app.include_router(data_router)
 app.include_router(messages_router)
 app.include_router(conversations_router)
 app.include_router(metrics_router)
+app.include_router(clickup_router)
+app.include_router(connections_router)
 
 class Question(BaseModel):
     question: str

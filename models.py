@@ -31,4 +31,18 @@ class DataSource(SQLModel, table=True):
 class Conversation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True) 
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+# ----------------------------- External Integrations ----------------------------- #
+
+
+class ClickUpConnection(SQLModel, table=True):
+    """Stores reusable ClickUp credential sets so admins don't need to re-enter them."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)  # human label
+    api_token: str
+    team: str
+    list: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True) 

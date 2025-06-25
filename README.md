@@ -8,7 +8,7 @@ The project lets end-users chat with your documents while giving administrators 
 
 ## ✨ Key Features
 
-* Retrieval-augmented answering using a local FAISS index fed by text / PDF files or article URLs.
+* Retrieval-augmented answering using a local FAISS index fed by text / PDF files, article URLs **and now ClickUp tasks + comments**.
 * Modern one-page chat UI with typing animation, thinking indicator and mobile-friendly layout.
 * SQLite persistence (via SQLModel) for:
   * Users (default `admin / admin`).
@@ -19,6 +19,7 @@ The project lets end-users chat with your documents while giving administrators 
   * Data-source manager – upload / delete / sync files & URLs into the vector store.
   * Message viewer – inspect the full chat log.
 * Modular code-base (routers, models, auth, db helpers) ready for scaling.
+* Persistent ClickUp credentials – save once and reuse via /connections UI.
 
 ---
 
@@ -97,6 +98,17 @@ RAG/
 | POST   | /datasources/{id}/sync| Parse & add source to vector store |
 | GET    | /messages/            | List chat messages |
 | GET    | /metrics/             | KPIs (msg count, avg latency, sources) |
+| POST   | /clickup/test         | Verify ClickUp credentials |
+| POST   | /clickup/tasks        | List tasks (with sync flag) |
+| POST   | /clickup/sync         | Sync one or many tasks |
+| POST   | /clickup/unsync       | Remove synced tasks |
+| POST   | /clickup/comments     | Fetch comments for a task |
+| GET    | /connections/          | List saved ClickUp connections |
+| POST   | /connections/          | Create a new connection |
+| GET    | /connections/{id}      | Get connection details |
+| PUT    | /connections/{id}      | Update connection |
+| DELETE | /connections/{id}      | Delete connection |
+| POST   | /connections/{id}/test | Test connection credentials |
 
 ---
 

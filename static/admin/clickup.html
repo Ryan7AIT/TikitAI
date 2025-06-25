@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClickUp Integration - RAG Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen bg-gray-100">
+    <!-- Navigation -->
+    <nav class="bg-purple-700 text-white px-6 py-4 flex justify-between items-center">
+        <span class="font-semibold text-lg">RAG Admin</span>
+        <div class="space-x-4">
+            <a href="/admin/dashboard.html" class="hover:underline">Dashboard</a>
+            <a href="/admin/datasources.html" class="hover:underline">Data Sources</a>
+            <a href="/admin/clickup.html" class="font-medium">ClickUp</a>
+            <a href="/admin/messages.html" class="hover:underline">Messages</a>
+            <a href="/" class="hover:underline">Chat</a>
+        </div>
+    </nav>
+
+    <main class="p-6">
+        <!-- Credentials Section -->
+        <section class="bg-white rounded-xl shadow p-6 mb-8">
+            <h2 class="text-lg font-medium mb-4">Connect to ClickUp</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">API Token</label>
+                    <input id="token" type="password" placeholder="pk_..." class="border p-2 rounded w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Team ID</label>
+                    <input id="team" type="text" placeholder="Team name or ID" class="border p-2 rounded w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">List ID</label>
+                    <input id="list" type="text" placeholder="List name or ID" class="border p-2 rounded w-full" />
+                </div>
+                <div class="flex items-end">
+                    <button id="test-btn" class="bg-purple-600 text-white px-4 py-2 rounded w-full md:w-auto">Test
+                        Connection &amp; Load Tasks</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Filters -->
+        <div class="flex items-center mb-4 space-x-4">
+            <label class="font-medium">Filter:</label>
+            <select id="filter" class="border p-2 rounded">
+                <option value="all">All</option>
+                <option value="synced">Synced</option>
+                <option value="not-synced">Not Synced</option>
+            </select>
+            <button id="sync-all" class="bg-green-600 text-white px-4 py-2 rounded hidden">Sync All</button>
+        </div>
+
+        <!-- Tasks Table -->
+        <div class="bg-white rounded-xl shadow overflow-x-auto">
+            <table class="min-w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Due
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Synced</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
+                    </tr>
+                </thead>
+                <tbody id="tasks-body"></tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="flex justify-center items-center mt-6 space-x-2 hidden">
+            <button id="prev-page" class="px-3 py-1 bg-gray-200 rounded disabled:opacity-50">Prev</button>
+            <span id="page-info" class="text-sm"></span>
+            <button id="next-page" class="px-3 py-1 bg-gray-200 rounded disabled:opacity-50">Next</button>
+        </div>
+    </main>
+
+    <script>
+        const tokenStorageKey = 'token';
+        const authToken = localStorage.getItem(tokenStorageKey);
+        const connStorageKey = 'clickupConn';
+        if (!authToken) location.href = '/login';
+
+        // State
+        let allTasks = [];
+        let currentPage = 1;
+        const pageSize = 10;
+
+        // Helpers
+        function getConn() {
+            const api_token = document.getElementById('token').value.trim();
+            const team = document.getElementById('team').value.trim();
+            const list = document.getElementById('list').value.trim();
+            return { api_token, team, list };
+        }
+
+        function applyFilter() {
+            const f = document.getElementById('filter').value;
+            let filtered = allTasks;
+            if (f === 'synced') filtered = allTasks.filter(t => t.synced);
+            if (f === 'not-synced') filtered = allTasks.filter(t => !t.synced);
+            currentPage = 1;
+            renderTable(filtered);
+        }
+
+        function paginate(arr) {
+            const start = (currentPage - 1) * pageSize;
+            return arr.slice(start, start + pageSize);
+        }
+
+        function renderTable(tasks) {
+            const tbody = document.getElementById('tasks-body');
+            tbody.innerHTML = '';
+            const pageTasks = paginate(tasks);
+            pageTasks.forEach(t => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50';
+                tr.innerHTML = `
+          <td class="px-4 py-2 text-xs text-gray-600">${t.id}</td>
+          <td class="px-4 py-2">${t.name}</td>
+          <td class="px-4 py-2">${t.status || ''}</td>
+          <td class="px-4 py-2">${t.due_date ? new Date(parseInt(t.due_date)).toLocaleDateString() : ''}</td>
+          <td class="px-4 py-2">${t.synced ? '<span class="text-green-600 font-semibold">Yes</span>' : 'No'}</td>
+          <td class="px-4 py-2 text-right">${t.synced ? `<button data-id="${t.id}" class="unsync-btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">Unsync</button>` : `<button data-id="${t.id}" class="sync-btn bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm">Sync</button>`}</td>
+        `;
+                tbody.appendChild(tr);
+            });
+            // Update pagination info
+            const totalPages = Math.ceil(tasks.length / pageSize);
+            const pag = document.getElementById('pagination');
+            if (totalPages > 1) {
+                pag.classList.remove('hidden');
+                document.getElementById('prev-page').disabled = currentPage === 1;
+                document.getElementById('next-page').disabled = currentPage === totalPages;
+                document.getElementById('page-info').textContent = `Page ${currentPage} / ${totalPages}`;
+            } else {
+                pag.classList.add('hidden');
+            }
+            // Show sync all button if any unsynced
+            const unsynced = allTasks.filter(t => !t.synced);
+            document.getElementById('sync-all').classList.toggle('hidden', unsynced.length === 0);
+        }
+
+        // Event Listeners
+        document.getElementById('test-btn').addEventListener('click', () => {
+            const conn = getConn();
+            if (!conn.api_token || !conn.team || !conn.list) {
+                alert('Please fill all fields');
+                return;
+            }
+            fetch('/clickup/tasks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(conn)
+            })
+                .then(r => r.json())
+                .then(tasks => {
+                    allTasks = tasks;
+                    applyFilter();
+                    localStorage.setItem(connStorageKey, JSON.stringify(getConn()));
+                })
+                .catch(err => alert('Failed: ' + err.message));
+        });
+
+        document.getElementById('filter').addEventListener('change', applyFilter);
+
+        // Table click for sync buttons + pagination
+        document.addEventListener('click', e => {
+            if (e.target.classList.contains('sync-btn')) {
+                const id = e.target.dataset.id;
+                const conn = getConn();
+                fetch('/clickup/sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ connection: conn, task_ids: [id] })
+                })
+                    .then(r => r.json())
+                    .then(() => {
+                        const t = allTasks.find(t => t.id === id);
+                        if (t) t.synced = true;
+                        applyFilter();
+                    });
+            }
+            if (e.target.classList.contains('unsync-btn')) {
+                const id = e.target.dataset.id;
+                const conn = getConn();
+                fetch('/clickup/unsync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ connection: conn, task_ids: [id] })
+                })
+                    .then(r => r.json())
+                    .then(() => {
+                        const t = allTasks.find(t => t.id === id);
+                        if (t) t.synced = false;
+                        applyFilter();
+                    });
+            }
+            if (e.target.id === 'prev-page') {
+                if (currentPage > 1) { currentPage--; applyFilter(); }
+            }
+            if (e.target.id === 'next-page') {
+                const totalPages = Math.ceil(allTasks.length / pageSize);
+                if (currentPage < totalPages) { currentPage++; applyFilter(); }
+            }
+        });
+
+        document.getElementById('sync-all').addEventListener('click', () => {
+            const unsyncedIds = allTasks.filter(t => !t.synced).map(t => t.id);
+            if (!unsyncedIds.length) return;
+            const conn = getConn();
+            fetch('/clickup/sync', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ connection: conn, task_ids: unsyncedIds })
+            })
+                .then(r => r.json())
+                .then(() => {
+                    allTasks.forEach(t => t.synced = true);
+                    applyFilter();
+                });
+        });
+
+        // Prefill stored connection
+        (function prefill() {
+            const saved = localStorage.getItem(connStorageKey);
+            if (saved) {
+                try {
+                    const c = JSON.parse(saved);
+                    document.getElementById('token').value = c.api_token || '';
+                    document.getElementById('team').value = c.team || '';
+                    document.getElementById('list').value = c.list || '';
+                } catch { }
+            }
+        })();
+
+        // After appending tr, add event listener click on row except buttons
+        document.addEventListener('click', e => {
+            if (e.target.classList.contains('sync-btn') || e.target.classList.contains('unsync-btn')) return;
+            // toggle comments row
+            const tr = e.target.closest('tr');
+            if (tr) {
+                const existing = tr.nextElementSibling && tr.nextElementSibling.classList.contains('comment-row');
+                if (existing) { tr.nextElementSibling.remove(); return; }
+                const conn = getConn();
+                const t = allTasks.find(t => t.id === tr.cells[0].textContent);
+                if (t) {
+                    fetch('/clickup/comments', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                        body: JSON.stringify({ connection: conn, task_id: t.id })
+                    })
+                        .then(r => r.json())
+                        .then(data => {
+                            const commentsTr = document.createElement('tr');
+                            commentsTr.className = 'comment-row bg-gray-50';
+                            commentsTr.innerHTML = `<td colspan="6" class="px-4 py-3 text-sm">${data.comments.length ? data.comments.map(c => `<p class='mb-1'>• ${c}</p>`).join('') : 'No comments'}</td>`;
+                            tr.parentNode.insertBefore(commentsTr, tr.nextSibling);
+                        });
+                }
+            }
+        });
+
+        // Load connection by id if present in query params
+        (function loadFromQuery() {
+            const params = new URLSearchParams(window.location.search);
+            const connId = params.get('conn');
+            if (connId) {
+                fetch(`/connections/${connId}`, { headers: { Authorization: `Bearer ${authToken}` } })
+                    .then(r => r.json())
+                    .then(c => {
+                        document.getElementById('token').value = c.api_token;
+                        document.getElementById('team').value = c.team;
+                        document.getElementById('list').value = c.list;
+                        // auto load tasks
+                        document.getElementById('test-btn').click();
+                    });
+            }
+        })();
+    </script>
+</body>
+
+</html>
