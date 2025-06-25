@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import logging
 
 # ---------------- RAG SETUP ---------------- #
+# This code is largely adapted from main.py but wrapped so it can be reused by the web app.
 
 from langchain_community.chat_models import ChatOllama
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -25,24 +26,9 @@ from db import get_session, create_db_and_tables, engine
 from models import Message, User, Conversation
 from sqlmodel import Session, select
 import time
-import requests
-
-# Test ollama api instead of langchain
-def call_ollama(prompt: str, model: str = "gemma3:1b"):
-    res = requests.post(
-        "http://localhost:11434/api/generate",
-        json={"model": model, "prompt": prompt, "stream": False}
-    )
-    return res.json()["response"]
-
-
-
-# Create logs directory path for loggers (define once)
-logs_dir = os.path.join(os.path.dirname(__file__), "logs")
-os.makedirs(logs_dir, exist_ok=True)
 
 # Instantiate models and vector store once at startup
-llm = ChatOllama(model="gemma3:1b")
+llm = ChatOllama(model="gemma3:4b")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 embedding_dim = len(embeddings.embed_query("hello world"))
 index = faiss.IndexFlatL2(embedding_dim)
@@ -110,7 +96,7 @@ def retrieve(state: State):
 def generate(state: State):
     docs_content = "\n\n".join(doc.page_content for doc in state["context"])
     messages = custom_prompt.invoke(
-        {"question": state["question"], "context": docs_content}
+            {"question": state["question"], "context": docs_content}
     )
     response = llm.invoke(messages)
     return {"answer": response.content}
@@ -128,52 +114,6 @@ def ask_question(question: str) -> str:
     except Exception as e:
         # Log or handle errors as needed.
         raise e
-
-# ---------------- Performance Logger ---------------- #
-# Log fine-grained timings for profiling (one line per /chat call)
-perf_logger = logging.getLogger("performance")
-if not perf_logger.handlers:
-    perf_logger.setLevel(logging.INFO)
-    ph = logging.FileHandler(os.path.join(logs_dir, "performance.log"))
-    # Each line: ts  client_ip  retrieve_ms  generate_ms  db_ms  total_ms  question
-    ph.setFormatter(logging.Formatter("%(asctime)s\t%(message)s"))
-    perf_logger.addHandler(ph)
-
-# ---------------- Timed RAG helper ---------------- #
-
-# We keep a light wrapper around the RAG process so we can measure each phase.
-def timed_rag(question: str) -> tuple[str, dict]:
-    """Run the RAG pipeline with detailed timing.
-
-    Returns a tuple `(answer_text, timings)` where timings is a dict like::
-
-        {
-            "retrieve_ms": 8,
-            "generate_ms": 412,
-            "total_ms": 420,
-        }
-    """
-    timings: dict[str, int] = {}
-
-    overall_start = time.time()
-
-    # -------- Retrieve -------- #
-    t0 = time.time()
-    retrieved_docs = vector_store.similarity_search(question, k=3)
-    timings["retrieve_ms"] = int((time.time() - t0) * 1000)
-
-    # Build prompt
-    docs_content = "\n\n".join(doc.page_content for doc in retrieved_docs)
-    messages = custom_prompt.invoke({"question": question, "context": docs_content})
-
-    # -------- Generate -------- #
-    t1 = time.time()
-    response = llm.invoke(messages)
-    timings["generate_ms"] = int((time.time() - t1) * 1000)
-
-    timings["total_ms"] = int((time.time() - overall_start) * 1000)
-
-    return response.content, timings
 
 # ---------------- FastAPI setup ---------------- #
 create_db_and_tables()
@@ -207,7 +147,10 @@ class Question(BaseModel):
     conversation_id: int | None = None
     model_name: str | None = None
 
-# Create loggers
+# Create logs directory and loggers
+logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(logs_dir, exist_ok=True)
+
 interaction_logger = logging.getLogger("interactions")
 if not interaction_logger.handlers:
     interaction_logger.setLevel(logging.INFO)
@@ -230,8 +173,9 @@ def chat_endpoint(
 ):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
-    answer, timings = timed_rag(payload.question)
-    latency_ms = timings["total_ms"]
+    start = time.time()
+    answer = ask_question(payload.question)
+    latency_ms = int((time.time() - start) * 1000)
 
     conv_id = payload.conversation_id
     if conv_id is None:
@@ -243,11 +187,9 @@ def chat_endpoint(
         session.refresh(conv)
         conv_id = conv.id
 
-    db_start = time.time()
     msg = Message(question=payload.question, answer=answer, latency_ms=latency_ms, conversation_id=conv_id)
     session.add(msg)
     session.commit()
-    timings["db_ms"] = int((time.time() - db_start) * 1000)
 
     client_ip = request.client.host if request.client else "unknown"
     # Escape tabs/newlines in texts
@@ -255,11 +197,6 @@ def chat_endpoint(
     safe_a = answer.replace("\t", " ").replace("\n", " ")
     interaction_logger.info(
         f"{msg.id}\tconv:{conv_id}\t{client_ip}\t{latency_ms}ms\tQ: {safe_q}\tA: {safe_a}"
-    )
-
-    # Performance timings line
-    perf_logger.info(
-        f"{msg.id}\t{client_ip}\t{timings.get('retrieve_ms', '?')}ms\t{timings.get('generate_ms', '?')}ms\t{timings.get('db_ms', '?')}ms\t{timings.get('total_ms', latency_ms)}ms\t{safe_q}"
     )
 
     return {"answer": answer, "latency_ms": latency_ms, "message_id": msg.id, "conversation_id": conv_id}
