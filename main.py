@@ -16,11 +16,26 @@ from langchain_community.document_loaders import TextLoader
 from langchain_core.prompts import PromptTemplate
 from langchain_core.documents import Document
 from langchain_core.tools import tool
+from langchain.chat_models import init_chat_model
 
 
-llm = ChatOllama(model="llama3.2:latest")
+lolcallm = "llama3.2:latest"
+apillm = "gemma-3-1b-it"
+GOOGLE_API_KEY="AIzaSyDSW8g-DrBwRYEpuBAgjJHCKOYW0rYK0BQ"
+is_local = False
 
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+if is_local:
+    llm = ChatOllama(model=lolcallm)
+else:
+    llm = init_chat_model(
+        model=apillm,
+        model_provider="google_genai",
+        api_key=GOOGLE_API_KEY,
+    )
+
+# embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# use mutlilang model
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
 embedding_dim = len(embeddings.embed_query("hello world"))
 index = faiss.IndexFlatL2(embedding_dim)
@@ -39,7 +54,7 @@ for path in file_paths:
     loader = TextLoader(path, encoding='utf-8')
     docs.extend(loader.load())
 
-docs = loader.load()
+# docs = loader.load()
 
 # print(docs[0])
 

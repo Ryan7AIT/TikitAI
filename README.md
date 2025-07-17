@@ -188,3 +188,41 @@ The chat UI now shows a "Performance" tab with detailed timing metrics for each 
 message_id  client_ip  retrieve_ms  generate_ms  db_ms  total_ms  question
 ```
 
+
+
+## 🔌 API (admin-only routes require `Authorization: Bearer <token>`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST   | /chat | Ask a question (public). |
+| POST   | /auth/login | Authenticate and receive JWT token. |
+| GET    | /conversations/ | List conversations. |
+| POST   | /conversations/ | Create a new conversation. |
+| PUT    | /conversations/{id} | Rename/update a conversation. |
+| DELETE | /conversations/{id} | Delete a conversation and its messages. |
+| GET    | /conversations/{id}/messages | Retrieve messages in a conversation. |
+| GET    | /messages/ | List all chat messages (admin). |
+| POST   | /messages/{id}/feedback | Leave 👍 / 👎 feedback on an answer (public). |
+| GET    | /datasources/ | List registered data sources. |
+| POST   | /datasources/upload | Upload a TXT/PDF file. |
+| POST   | /datasources/add-url | Register an external article URL. |
+| DELETE | /datasources/{id} | Delete a data source. |
+| POST   | /datasources/{id}/sync | Parse & embed a data source into the vector store. |
+| GET    | /datasources/{id}/preview | Download/preview the raw source. |
+| GET    | /metrics/ | Basic KPIs: message count, avg latency, sources count. |
+| POST   | /clickup/test | Verify ClickUp credentials. |
+| POST   | /clickup/tasks | List ClickUp tasks (with sync status). |
+| POST   | /clickup/sync | Sync one or more tasks into the vector store. |
+| POST   | /clickup/unsync | Remove previously-synced tasks. |
+| POST   | /clickup/comments | Fetch comments for a ClickUp task. |
+| POST   | /clickup/teams | List available ClickUp teams. |
+| POST   | /clickup/spaces | List spaces within a team. |
+| POST   | /clickup/lists | List lists within a space. |
+| GET    | /connections/ | List saved ClickUp connections. |
+| POST   | /connections/ | Create a new connection. |
+| GET    | /connections/{id} | Retrieve connection details. |
+| PUT    | /connections/{id} | Update an existing connection. |
+| DELETE | /connections/{id} | Delete a connection. |
+| POST   | /connections/{id}/test | Test stored connection credentials. |
+
+---

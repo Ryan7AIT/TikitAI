@@ -78,6 +78,7 @@ class MessageOut(BaseModel):
     question: str
     answer: str
     timestamp: datetime
+    feedback: Optional[str] = None
 
     class Config:
         orm_mode = True

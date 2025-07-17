@@ -6,7 +6,9 @@ import faiss
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
 
-# Get all .txt files in the 'data' folder
+# this file is for testing the embeddings model
+
+# Get all .txt files in the 'data' folder 
 file_paths = glob.glob("data/*.txt")
 
 # Load all documents
@@ -24,7 +26,9 @@ all_splits = text_splitter.split_documents(docs)
 
 # print(len(all_splits))
 
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# use mutlilang model
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
 texts = [doc.page_content for doc in all_splits]
 vectors = embeddings.embed_documents(texts)

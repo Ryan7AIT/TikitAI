@@ -6,7 +6,7 @@ import requests, os
 
 from db import get_session
 from models import DataSource
-from app import vector_store
+from services.vector_service import get_vector_service
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from auth import get_current_user
@@ -21,8 +21,8 @@ CLICKUP_FILE_PREFIX = "clickup_"  # filenames will be clickup_<task_id>.txt
 
 class ClickUpConnection(BaseModel):
     api_token: str
-    team: str  # name or id
-    list: str  # name or id
+    team: Optional[str] = None  # name or id – optional when only testing token
+    list: Optional[str] = None  # name or id – optional until a list is chosen
 
     # resolved ids get cached on instance (not part of schema persistence)
     team_id: Optional[str] = None
@@ -39,6 +39,8 @@ class ClickUpTask(BaseModel):
 class SyncPayload(BaseModel):
     connection: ClickUpConnection
     task_ids: Optional[List[str]] = None  # if None → sync all
+
+
 
 # ------------------------------- Helper functions ------------------------------- #
 
@@ -77,12 +79,9 @@ def _task_to_file(task: dict, comments: List[str]) -> str:
     path = os.path.join(DATA_DIR, f"{CLICKUP_FILE_PREFIX}{task_id}.txt")
     lines = [
         f"Task ID: {task_id}",
-        f"Name: {task.get('name')}",
-        f"Status: {task.get('status', {}).get('status')}" if task.get("status") else "Status:",
-        f"Description: {task.get('description') or ''}",
-        f"Assignees: {', '.join(a.get('username') for a in task.get('assignees', []))}",
-        f"Due Date: {task.get('due_date')}",
-        "--- Comments ---",
+        f"Issue: {task.get('name')}",
+        f"Problem: {task.get('description') or ''}",
+        "Solution:",
     ]
     lines.extend(comments)
     content = "\n".join(lines)
@@ -149,8 +148,46 @@ def _resolve_list_id(token: str, team_id: str, list_value: str) -> str:
     raise HTTPException(status_code=404, detail="List not found in ClickUp")
 
 
+def _get_spaces(token: str, team_id: str):
+    """Return all spaces for a given team id."""
+    url = f"https://api.clickup.com/api/v2/team/{team_id}/space"
+    resp = requests.get(url, headers=_make_headers(token))
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Unable to fetch spaces from ClickUp")
+    return resp.json().get("spaces", [])
+
+
+def _get_lists(token: str, space_id: str):
+    """Return all lists (folderless + inside folders) for a given space."""
+    # folderless lists
+    lists_url = f"https://api.clickup.com/api/v2/space/{space_id}/list"
+    resp = requests.get(lists_url, headers=_make_headers(token))
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Unable to fetch lists from ClickUp space")
+    lists_out = resp.json().get("lists", [])
+
+    # folders + their lists
+    folders_url = f"https://api.clickup.com/api/v2/space/{space_id}/folder"
+    f_resp = requests.get(folders_url, headers=_make_headers(token))
+    if f_resp.status_code == 200:
+        for folder in f_resp.json().get("folders", []):
+            folder_lists = folder.get("lists", [])
+            if not folder_lists:
+                # fallback – sometimes lists omitted, fetch directly
+                fid = folder.get("id")
+                li_resp = requests.get(f"https://api.clickup.com/api/v2/folder/{fid}/list", headers=_make_headers(token))
+                if li_resp.status_code == 200:
+                    folder_lists = li_resp.json().get("lists", [])
+            lists_out.extend(folder_lists)
+    return lists_out
+
+
 def _ensure_ids(conn: ClickUpConnection):
-    """Populate conn.team_id and conn.list_id if missing."""
+    """Populate conn.team_id and conn.list_id if missing. Raises if needed infos are absent."""
+    if not conn.team and not conn.team_id:
+        raise HTTPException(status_code=400, detail="team is required for this operation")
+    if not conn.list and not conn.list_id:
+        raise HTTPException(status_code=400, detail="list is required for this operation")
     if not conn.team_id:
         conn.team_id = _resolve_team_id(conn.api_token, conn.team)
     if not conn.list_id:
@@ -160,9 +197,13 @@ def _ensure_ids(conn: ClickUpConnection):
 
 @router.post("/test")
 def test_connection(conn: ClickUpConnection, _: str = Depends(get_current_user)):
-    """Verify that the provided credentials can access ClickUp list."""
+    """Verify that the provided token (and optionally team/list) can reach ClickUp."""
     try:
-        _ = _fetch_tasks(conn)
+        if conn.team and conn.list:
+            _ = _fetch_tasks(conn)
+        else:
+            # token-only: just fetch teams as validation
+            _ = _get_teams(conn.api_token)
         return {"status": "ok"}
     except HTTPException as e:
         raise e
@@ -221,7 +262,7 @@ def sync_tasks(payload: SyncPayload, session: Session = Depends(get_session), _:
         loader = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
         doc = Document(page_content=open(file_path, "r", encoding="utf-8").read())
         splits = loader.split_documents([doc])
-        vector_store.add_documents(splits)
+        get_vector_service().add_documents(splits)
         added_docs += len(splits)
 
     return {"status": "synced", "tasks_synced": len(ids_to_sync), "added_docs": added_docs}
@@ -265,4 +306,36 @@ class CommentPayload(BaseModel):
 def get_task_comments(payload: CommentPayload, _: str = Depends(get_current_user)):
     _ensure_ids(payload.connection)
     comments = _fetch_comments(payload.task_id, payload.connection.api_token)
-    return {"comments": comments} 
+    return {"comments": comments}
+
+# -------------------- New hierarchy helper endpoints -------------------- #
+
+class TokenOnly(BaseModel):
+    api_token: str
+
+class TeamPayload(BaseModel):
+    api_token: str
+    team_id: str
+
+class SpacePayload(BaseModel):
+    api_token: str
+    space_id: str
+
+@router.post("/teams")
+def list_teams(payload: TokenOnly, _: str = Depends(get_current_user)):
+    teams = _get_teams(payload.api_token)
+    return [{"id": t.get("id"), "name": t.get("name")} for t in teams]
+
+@router.post("/spaces")
+def list_spaces(payload: TeamPayload, _: str = Depends(get_current_user)):
+    spaces = _get_spaces(payload.api_token, payload.team_id)
+    return [{"id": s.get("id"), "name": s.get("name")} for s in spaces]
+
+@router.post("/lists")
+def list_lists(payload: SpacePayload, _: str = Depends(get_current_user)):
+    lists_ = _get_lists(payload.api_token, payload.space_id)
+    return [{"id": l.get("id"), "name": l.get("name")} for l in lists_] 
+
+
+
+

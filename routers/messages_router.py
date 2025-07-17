@@ -57,6 +57,10 @@ def leave_feedback(
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
+    message.feedback = payload.feedback
+    session.add(message)
+    session.commit()
+
     client_ip = request.client.host if request.client else "unknown"
     feedback_logger.info(f"{message_id}\t{client_ip}\t{payload.feedback}")
     return {"status": "ok"} 

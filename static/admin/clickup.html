@@ -17,6 +17,7 @@
             <a href="/admin/datasources.html" class="hover:underline">Data Sources</a>
             <a href="/admin/clickup.html" class="font-medium">ClickUp</a>
             <a href="/admin/messages.html" class="hover:underline">Messages</a>
+            <a href="/admin/preferences.html" class="hover:underline">Preferences</a>
             <a href="/" class="hover:underline">Chat</a>
         </div>
     </nav>
@@ -25,22 +26,26 @@
         <!-- Credentials Section -->
         <section class="bg-white rounded-xl shadow p-6 mb-8">
             <h2 class="text-lg font-medium mb-4">Connect to ClickUp</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                     <label class="block text-sm font-medium mb-1">API Token</label>
                     <input id="token" type="password" placeholder="pk_..." class="border p-2 rounded w-full" />
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">Team ID</label>
-                    <input id="team" type="text" placeholder="Team name or ID" class="border p-2 rounded w-full" />
+                    <label class="block text-sm font-medium mb-1">Team</label>
+                    <select id="team" class="border p-2 rounded w-full" disabled></select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">List ID</label>
-                    <input id="list" type="text" placeholder="List name or ID" class="border p-2 rounded w-full" />
+                    <label class="block text-sm font-medium mb-1">Space</label>
+                    <select id="space" class="border p-2 rounded w-full" disabled></select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">List</label>
+                    <select id="list" class="border p-2 rounded w-full" disabled></select>
                 </div>
                 <div class="flex items-end">
-                    <button id="test-btn" class="bg-purple-600 text-white px-4 py-2 rounded w-full md:w-auto">Test
-                        Connection &amp; Load Tasks</button>
+                    <button id="load-btn" class="bg-purple-600 text-white px-4 py-2 rounded w-full md:w-auto">Connect
+                        &amp; Load</button>
                 </div>
             </div>
         </section>
@@ -97,12 +102,75 @@
         let currentPage = 1;
         const pageSize = 10;
 
-        // Helpers
+        const tokenInput = document.getElementById('token');
+        const teamSel = document.getElementById('team');
+        const spaceSel = document.getElementById('space');
+        const listSel = document.getElementById('list');
+
+        function clearSelect(sel) { sel.innerHTML = ''; sel.disabled = true; }
+        function populateSelect(sel, items, placeholder) {
+            sel.innerHTML = `<option value="">${placeholder}</option>`;
+            items.forEach(i => {
+                const opt = document.createElement('option');
+                opt.value = i.id;
+                opt.textContent = i.name;
+                sel.appendChild(opt);
+            });
+            sel.disabled = false;
+        }
+
+        // ---- Hierarchy loading ----
+        document.getElementById('load-btn').addEventListener('click', () => {
+            const tok = tokenInput.value.trim();
+            if (!tok) return alert('Enter API token');
+            // validate token by fetching teams
+            fetch('/clickup/teams', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }, body: JSON.stringify({ api_token: tok }) })
+                .then(r => r.json())
+                .then(teams => {
+                    if (!teams.length) throw new Error('No teams');
+                    populateSelect(teamSel, teams, 'Select team');
+                    clearSelect(spaceSel); clearSelect(listSel);
+                })
+                .catch(err => alert('Failed: ' + err.message));
+        });
+
+        teamSel.addEventListener('change', () => {
+            const tId = teamSel.value;
+            const tok = tokenInput.value.trim();
+            if (!tId) { clearSelect(spaceSel); clearSelect(listSel); return; }
+            fetch('/clickup/spaces', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }, body: JSON.stringify({ api_token: tok, team_id: tId }) })
+                .then(r => r.json())
+                .then(spaces => {
+                    populateSelect(spaceSel, spaces, 'Select space');
+                    clearSelect(listSel);
+                });
+        });
+
+        spaceSel.addEventListener('change', () => {
+            const sId = spaceSel.value;
+            const tok = tokenInput.value.trim();
+            if (!sId) { clearSelect(listSel); return; }
+            fetch('/clickup/lists', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }, body: JSON.stringify({ api_token: tok, space_id: sId }) })
+                .then(r => r.json())
+                .then(lists => {
+                    populateSelect(listSel, lists, 'Select list');
+                });
+        });
+
+        listSel.addEventListener('change', () => {
+            const lId = listSel.value;
+            if (!lId) return;
+            loadTasks();
+        });
+
         function getConn() {
-            const api_token = document.getElementById('token').value.trim();
-            const team = document.getElementById('team').value.trim();
-            const list = document.getElementById('list').value.trim();
-            return { api_token, team, list };
+            return { api_token: tokenInput.value.trim(), team: teamSel.value, list: listSel.value };
+        }
+
+        function loadTasks() {
+            const conn = getConn();
+            fetch('/clickup/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }, body: JSON.stringify(conn) })
+                .then(r => r.json()).then(tasks => { allTasks = tasks; applyFilter(); });
         }
 
         function applyFilter() {
@@ -153,29 +221,6 @@
         }
 
         // Event Listeners
-        document.getElementById('test-btn').addEventListener('click', () => {
-            const conn = getConn();
-            if (!conn.api_token || !conn.team || !conn.list) {
-                alert('Please fill all fields');
-                return;
-            }
-            fetch('/clickup/tasks', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${authToken}`
-                },
-                body: JSON.stringify(conn)
-            })
-                .then(r => r.json())
-                .then(tasks => {
-                    allTasks = tasks;
-                    applyFilter();
-                    localStorage.setItem(connStorageKey, JSON.stringify(getConn()));
-                })
-                .catch(err => alert('Failed: ' + err.message));
-        });
-
         document.getElementById('filter').addEventListener('change', applyFilter);
 
         // Table click for sync buttons + pagination
@@ -296,8 +341,13 @@
                         document.getElementById('team').value = c.team;
                         document.getElementById('list').value = c.list;
                         // auto load tasks
-                        document.getElementById('test-btn').click();
+                        document.getElementById('load-btn').click();
                     });
+            }
+            const tokenParam = params.get('token');
+            if (tokenParam) {
+                document.getElementById('token').value = tokenParam;
+                document.getElementById('load-btn').click();
             }
         })();
     </script>
