@@ -46,6 +46,26 @@ def create_db_and_tables():
         if cols and not any(row[1] == "path" for row in cols):
             conn.execute(text("ALTER TABLE datasource ADD COLUMN path TEXT"))
             conn.commit()
+
+        cols = conn.execute(text("PRAGMA table_info(user)")).fetchall()
+        if cols and not any(row[1] == "is_super_admin" for row in cols):
+            conn.execute(text("ALTER TABLE user ADD COLUMN is_super_admin INTEGER"))
+            conn.commit()
+
+        cols = conn.execute(text("PRAGMA table_info(user)")).fetchall()
+        if cols and not any(row[1] == "current_workspace_id" for row in cols):
+            conn.execute(text("ALTER TABLE user ADD COLUMN current_workspace_id INTEGER"))
+            conn.commit()
+
+        cols = conn.execute(text("PRAGMA table_info(datasource)")).fetchall()
+        if cols and not any(row[1] == "workspace_id" for row in cols):
+            conn.execute(text("ALTER TABLE datasource ADD COLUMN workspace_id INTEGER"))
+            conn.commit()
+
+        cols = conn.execute(text("PRAGMA table_info(conversation)")).fetchall()
+        if cols and not any(row[1] == "workspace_id" for row in cols):
+            conn.execute(text("ALTER TABLE conversation ADD COLUMN workspace_id INTEGER"))
+            conn.commit()
     
     # Initialize external data sources if they don't exist
     _initialize_external_data_sources()

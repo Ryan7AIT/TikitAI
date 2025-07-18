@@ -71,4 +71,24 @@ class ClickUpConnection(SQLModel, table=True):
     team: str
     list: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True) 
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+# ----------------------------- User Roles ----------------------------- #
+
+class Role(SQLModel, table=True):
+    """Represents a user role with a set of permissions."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True)
+    description: Optional[str] = None
+    # Store permissions as a comma-separated string for simplicity
+    permissions: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class RoleAssignment(SQLModel, table=True):
+    """Associates users with roles (many-to-many)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    role_id: int = Field(foreign_key="role.id")
+    user_id: int = Field(foreign_key="user.id")
+    assigned_at: datetime = Field(default_factory=datetime.utcnow) 
