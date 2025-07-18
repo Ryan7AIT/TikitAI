@@ -258,12 +258,10 @@ def sync_tasks(payload: SyncPayload, session: Session = Depends(get_session), _:
             ds.last_synced_at = _dt.utcnow()
         session.commit()
 
-        # Load and embed
-        loader = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-        doc = Document(page_content=open(file_path, "r", encoding="utf-8").read())
-        splits = loader.split_documents([doc])
-        get_vector_service().add_documents(splits)
-        added_docs += len(splits)
+        # Load and embed using standardized logic
+        content = open(file_path, "r", encoding="utf-8").read()
+        docs_added = get_vector_service().embed_content_string(content, os.path.basename(file_path))
+        added_docs += docs_added
 
     return {"status": "synced", "tasks_synced": len(ids_to_sync), "added_docs": added_docs}
 

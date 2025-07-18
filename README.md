@@ -179,6 +179,113 @@ Lightweight migration logic automatically adds the new column on first run after
 
 • Sidebar can be toggled on mobile via the ☰ icon for a roomier chat view. 
 
+---
+
+## 📄 Document Embedding Rules
+
+The RAG system uses a sophisticated document processing pipeline that handles different file types with appropriate splitting strategies. All embedding operations are centralized and consistent across the application.
+
+### 🎯 Core Embedding Principles
+
+1. **Database-Driven**: Only documents with `is_synced = 1` in the DataSource table are embedded
+2. **Type-Aware Splitting**: Different document types use different chunking strategies
+3. **Centralized Logic**: All embedding operations use the same processing pipeline
+4. **Consistent Processing**: Whether documents are synced individually or in bulk, the same rules apply
+
+### 📝 Document Type Processing Rules
+
+#### Documentation Files (`*_docs.txt`, `*_docs.md`)
+- **Strategy**: Guide-based splitting
+- **Delimiter**: Triple dashes (`---`)
+- **Use Case**: Technical documentation, user guides, knowledge bases
+- **Example**:
+  ```
+  Section 1 Content
+  ---
+  Section 2 Content
+  ---
+  Section 3 Content
+  ```
+
+#### ClickUp Tasks (`clickup_*.txt`)
+- **Strategy**: Single chunk per task
+- **Processing**: Keep entire task content as one document
+- **Use Case**: Task descriptions, issue tracking, project management
+- **Format**: Task ID, Issue description, Problem, Solution
+
+#### Support Tickets & Regular Files (all other `.txt`, `.md`)
+- **Strategy**: Issue-based splitting
+- **Delimiter**: The word "Issue"
+- **Processing**: Split on "Issue" keyword and prepend "Issue" to each chunk
+- **Use Case**: Support ticket systems, incident reports, troubleshooting guides
+
+#### PDF Files (`.pdf`)
+- **Strategy**: Page-based processing
+- **Processing**: Each page becomes a separate chunk
+- **Use Case**: Documentation, reports, manuals
+
+#### URLs (`http://`, `https://`)
+- **Strategy**: Web content extraction
+- **Processing**: Extracts main content and applies appropriate splitting based on content type
+- **Use Case**: Articles, blog posts, online documentation
+
+### 🔄 Embedding Workflow
+
+1. **Sync Check**: System verifies `DataSource.is_synced = 1`
+2. **Type Detection**: File extension and naming patterns determine processing strategy
+3. **Content Loading**: Documents are loaded using appropriate loaders (TextLoader, PyPDFLoader, WebBaseLoader)
+4. **Standardized Processing**: Content is processed through `VectorStoreService.process_documents_for_embedding()`
+5. **Vector Store Addition**: Processed chunks are added to the FAISS vector store
+
+### 🛠️ API Embedding Operations
+
+| Operation | Description | Database Check |
+|-----------|-------------|----------------|
+| **App Initialization** | Loads all synced documents on startup | ✅ Only `is_synced = 1` |
+| **Individual Sync** | `/datasources/{id}/sync` | ✅ Updates `is_synced = 1` after embedding |
+| **Bulk Sync** | `/datasources/regular/sync` | ✅ Only processes `is_synced != 1` |
+| **ClickUp Sync** | `/external/{id}/clickup/tickets/{ticket_id}/sync` | ✅ Creates DataSource with `is_synced = 1` |
+| **Rebuild Vector Store** | After deletions or major changes | ✅ Only `is_synced = 1` sources |
+
+### 🔍 Embedding Functions
+
+#### Core Functions
+- `VectorStoreService.process_documents_for_embedding()` - Main processing logic
+- `VectorStoreService.embed_datasource()` - Embed single datasource
+- `VectorStoreService.embed_content_string()` - Embed content string
+- `rebuild_vector_store()` - Rebuild entire vector store
+
+#### File Pattern Detection
+```python
+# Documentation files (only files with "_docs" in name)
+if "_docs.txt" in filename or "_docs.md" in filename:
+    # Split by "---"
+
+# ClickUp tasks  
+elif "clickup_" in filename:
+    # Keep as single chunks
+
+# Regular support tickets and other files
+else:
+    # Split by "Issue"
+```
+
+### ⚠️ Important Notes
+
+- **Consistency**: All embedding operations use the same `VectorStoreService.process_documents_for_embedding()` method
+- **Database Authority**: The DataSource table is the single source of truth for what should be embedded
+- **Sync Status**: Files are only embedded when `is_synced = 1`
+- **Error Handling**: Failed embeddings are logged but don't stop the overall process
+- **Performance**: Large files are automatically chunked appropriately for optimal retrieval
+
+### 🚀 Best Practices
+
+1. **File Naming**: Use consistent naming patterns (`*_docs.txt` for documentation, `clickup_*` for tasks)
+2. **Content Structure**: Structure documentation with `---` separators for better chunking
+3. **Sync Management**: Always use the admin interface to manage sync status
+4. **Monitoring**: Check logs for embedding errors and performance metrics
+
+---
 
 ## 📊 Performance Metrics (v1.5)
 

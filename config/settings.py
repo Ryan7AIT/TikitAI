@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     similarity_search_k: int = 1
     
     # API Configuration
-    api_title: str = "RAG Chat API"
+    api_title: str = "RAG Chat API "
     cors_origins: List[str] = ["http://localhost:4200"]
     
     # File Configuration
@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     
     # Chat Configuration
     max_question_length: int = 1000
+    
+    # Security Configuration
+    secret_key: str = "CHANGE_ME"  # Override in production via env var
+    access_token_expire_minutes: int = 60 * 24  # 24 hours
     
     class Config:
         env_file = ".env"

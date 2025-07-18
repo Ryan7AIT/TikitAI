@@ -18,7 +18,7 @@ from langchain_community.document_loaders import TextLoader, PyPDFLoader, WebBas
 from langchain_core.documents import Document
 from routers.clickup_router import _fetch_comments, _make_headers
 import requests
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 import logging
 
 CLICKUP_FILE_PREFIX = "clickup_"
@@ -670,16 +670,9 @@ def _update_datasource_metadata(ds: DataSource, file_path: str, task_data: dict)
         ds.tags = ", ".join(assignees) if assignees else None
 
 
-def _embed_content(content: str, is_clickup: bool = False) -> int:
-    """Split the content and add each chunk to the vector store. Returns number of chunks added."""
-    doc = Document(page_content=content)
-    if is_clickup:
-                    get_vector_service().add_documents([doc])
-    else:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-        splits = splitter.split_documents([doc])
-        get_vector_service().add_documents(splits)
-    return 1
+def _embed_content(content: str, source_reference: str) -> int:
+    """Split the content and add each chunk to the vector store using standardized logic. Returns number of chunks added."""
+    return get_vector_service().embed_content_string(content, source_reference)
 
 
 def _mark_as_synced(ds: DataSource) -> None:
@@ -708,7 +701,7 @@ def _sync_clickup_task(ticket_id: str, session: Session) -> dict:
     _update_datasource_metadata(ds, file_path, task_data)
 
     # Embed content and mark datasource as synced
-    added_docs = _embed_content(content, is_clickup=True)
+    added_docs = _embed_content(content, filename)
     _mark_as_synced(ds)
 
     session.add(ds)
@@ -759,7 +752,7 @@ def sync_regular_source(
     dir = 'data'
     try:
         if ds.source_type == "file":
-            if ds.reference.lower().endswith(".txt"):
+            if ds.reference.lower().endswith(".txt") or ds.reference.lower().endswith(".md"):
                 loader = TextLoader(os.path.join(dir, ds.reference), encoding="utf-8")
                 documents.extend(loader.load())
             elif ds.reference.lower().endswith(".pdf"):
@@ -775,17 +768,13 @@ def sync_regular_source(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Add to vector store
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+    # Add to vector store using standardized embedding logic
+    added_docs = 0
     if documents:
-        if ds.reference.lower().endswith(".txt"):
-            # simple char split as earlier
-            splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-            splits = splitter.split_documents(documents)
-        else:
-            splits = documents
-        get_vector_service().add_documents(splits)
+        splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference])
+        if splits:
+            get_vector_service().add_documents(splits)
+            added_docs = len(splits)
 
     # Mark as synced
     from datetime import datetime as _dt
@@ -794,7 +783,7 @@ def sync_regular_source(
     session.add(ds)
     session.commit()
 
-    return {"status": "synced", "added_docs": len(documents), "last_synced_at": ds.last_synced_at}
+    return {"status": "synced", "added_docs": added_docs, "last_synced_at": ds.last_synced_at}
 
 
 @router.post("/regular/{source_id}/unsync")
@@ -809,16 +798,18 @@ def unsync_regular_source(
         raise HTTPException(status_code=404, detail="DataSource not found")
 
     # Remove file if it's a regular file
-    if ds.source_type == "file" and ds.reference:
-        file_path = os.path.join(DATA_DIR, ds.reference) if not os.path.isabs(ds.reference) else ds.reference
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
+    # if ds.source_type == "file" and ds.reference:
+    #     file_path = os.path.join(DATA_DIR, ds.reference) if not os.path.isabs(ds.reference) else ds.reference
+    #     if os.path.exists(file_path):
+    #         try:
+    #             os.remove(file_path)
+    #         except Exception:
+    #             pass
 
     # Remove from database
-    session.delete(ds)
+    # session.delete(ds)
+    # update is_synced to 0
+    ds.is_synced = 0
     session.commit()
 
     # Rebuild vector store to ensure removed docs are gone
@@ -860,7 +851,7 @@ def unsync_clickup_task(
     return {"status": "unsynced"}
 
 
-@router.post("/sync")
+@router.post("/regular/sync")
 def sync_all_sources(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
@@ -879,7 +870,7 @@ def sync_all_sources(
             dir = 'data'
             try:
                 if ds.source_type == "file":
-                    if ds.reference.lower().endswith(".txt"):
+                    if ds.reference.lower().endswith(".txt") or ds.reference.lower().endswith(".md"):
                         loader = TextLoader(os.path.join(dir, ds.reference), encoding="utf-8")
                         documents.extend(loader.load())
                     elif ds.reference.lower().endswith(".pdf"):
@@ -890,14 +881,10 @@ def sync_all_sources(
                     documents.extend(loader.load())
 
                 if documents:
-                    from langchain_text_splitters import RecursiveCharacterTextSplitter
-                    if ds.reference.lower().endswith(".txt"):
-                        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-                        splits = splitter.split_documents(documents)
-                    else:
-                        splits = documents
-                    get_vector_service().add_documents(splits)
-                    total_docs += len(splits)
+                    splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference])
+                    if splits:
+                        get_vector_service().add_documents(splits)
+                        total_docs += len(splits)
 
                 # Mark as synced
                 from datetime import datetime as _dt
@@ -922,55 +909,45 @@ def sync_all_sources(
         "errors": errors
     }
 
+@router.post("/regular/unsync")
+def unsync_all_sources(
+    session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
+):
+    """Unsync all datasources that are currently synced."""
+    sources = session.exec(select(DataSource).where(DataSource.is_synced == 1)).all()
 
+    for ds in sources:
+        ds.is_synced = 0
+        session.commit()
 
-# Helper to rebuild FAISS index from all current sources (called after delete)
+    # Rebuild vector store to ensure removed docs are gone
+    rebuild_vector_store(session)
+
+    return {"status": "unsynced"}
+
+# Helper to rebuild FAISS index from all synced sources (called after delete)
 def rebuild_vector_store(session: Session):
+    """Rebuild the vector store using only synced datasources from the database."""
     # Reset the vector store
     vector_service = get_vector_service()
     vector_service.reset_vector_store()
 
-    sources = session.exec(select(DataSource)).all()
-
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-    for src in sources:
-        docs: List[Document] = []
+    # Get only synced datasources
+    synced_sources = session.exec(select(DataSource).where(DataSource.is_synced == 1)).all()
+    
+    total_docs_added = 0
+    for src in synced_sources:
         try:
-            if src.source_type == "file":
-                if src.reference.lower().endswith(".txt"):
-                    loader = TextLoader(src.reference, encoding="utf-8")
-                    docs.extend(loader.load())
-                elif src.reference.lower().endswith(".pdf"):
-                    loader = PyPDFLoader(src.reference)
-                    docs.extend(loader.load())
-            elif src.source_type == "url":
-                loader = WebBaseLoader(src.reference)
-                docs.extend(loader.load())
-        except Exception:
+            docs_added = vector_service.embed_datasource(src)
+            total_docs_added += docs_added
+        except Exception as e:
+            logging.error(f"Error rebuilding vector store for datasource {src.reference}: {e}")
             continue
+    
+    logging.info(f"Vector store rebuilt with {total_docs_added} document chunks from {len(synced_sources)} synced datasources")
 
-        if docs:
-            if src.reference.lower().endswith(".txt") and not src.reference.lower().startswith(CLICKUP_FILE_PREFIX):
-                if "_docs.txt" in src.reference.lower():
-                    # Use guide-based splitting for documentation files
-                    raw_text = "\n".join([doc.page_content for doc in docs])
-                    chunks = [chunk.strip() for chunk in raw_text.split("---") if chunk.strip()]
-                    splits = [Document(page_content=chunk) for chunk in chunks]
-                else:
-                    # Use Issue-based splitting for support tickets
-                    raw_text = "\n".join([doc.page_content for doc in docs])
-                    chunks = [
-                        "Issue" + chunk.strip() for chunk in raw_text.split("Issue") if chunk.strip()
-                    ]
-                    splits = [Document(page_content=chunk) for chunk in chunks]
-            else:
-                splits = docs
-            if len(splits) == 0:
-                continue
-            get_vector_service().add_documents(splits)
-
-
+# markdown preview routes
 class FileContentResponse(BaseModel):
     filename: str
     content: str
@@ -1162,3 +1139,32 @@ def preview_source(
         return RedirectResponse(ds.reference)
     else:
         raise HTTPException(status_code=400, detail="Unsupported source type") 
+
+@router.get("/debug/vector-store-info")
+def get_vector_store_info(
+    _: str = Depends(get_current_user),
+):
+    """Debug endpoint to check vector store status and document count."""
+    vector_service = get_vector_service()
+    info = vector_service.get_vector_store_info()
+    return info
+
+@router.post("/debug/reload-vector-store")
+def reload_vector_store(
+    session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
+):
+    """Debug endpoint to reload all synced documents into the vector store."""
+    vector_service = get_vector_service()
+    
+    # Reset and reload
+    vector_service.reset_vector_store()
+    vector_service.load_documents_from_data_folder()
+    
+    # Get updated info
+    info = vector_service.get_vector_store_info()
+    
+    return {
+        "status": "reloaded",
+        "vector_store_info": info
+    } 
