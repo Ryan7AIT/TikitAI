@@ -90,6 +90,7 @@ def include_routers(app: FastAPI):
     from routers.connections_router import router as connections_router
     from routers.user_management_router import router as user_management_router
     from routers.user_roles_router import router as user_roles_router
+    from routers.workspace_router import router as workspace_router
     
     app.include_router(auth_router)
     app.include_router(chat_router)
@@ -101,6 +102,7 @@ def include_routers(app: FastAPI):
     app.include_router(connections_router)
     app.include_router(user_management_router)
     app.include_router(user_roles_router)
+    app.include_router(workspace_router)
     
     logger.info("All routers included")
 

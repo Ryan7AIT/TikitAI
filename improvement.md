@@ -158,42 +158,33 @@ async def get_async_session():
 ```
 
 ### 2. **Vector Store Performance**
-**❌ Current Issues:**
-- **In-memory FAISS** - data lost on restart
-- **No persistence** of vector embeddings
-- **Large embedding model** loaded for every request
-- **No caching** of embeddings
+**✅ IMPLEMENTED** - Persistent FAISS with disk storage
+- **In-memory FAISS** ✅ **FIXED** - Now persists to disk automatically
+- **No persistence** ✅ **FIXED** - Vector embeddings now saved/loaded from disk
+- **Large embedding model** loaded for every request ⚠️ **PARTIAL** - Still loads on first request
+- **No caching** of embeddings ❌ **PENDING** - Still needs caching implementation
 
-**✅ Solutions:**
+**✅ Implemented Solution:**
+The VectorStoreService now includes:
+- Automatic save/load functionality using `faiss.write_index()` and `faiss.read_index()`
+- Persistent storage of docstore and index mappings using pickle
+- Automatic loading on initialization if persistent files exist
+- Auto-save after any document additions or embeddings
+- Three persistent files: `vector_store.faiss`, `docstore.pkl`, `index_mapping.pkl`
+
+**✅ Key Features Added:**
+- `save_vector_store()` - Saves index, docstore, and mappings to disk
+- `load_vector_store()` - Loads existing vector store from disk on startup
+- Auto-save after `add_documents()`, `embed_datasource()`, `embed_content_string()`
+- Enhanced `get_vector_store_info()` shows persistence status
+- `reset_vector_store()` properly cleans up persistent files
+
+**🔄 Remaining Tasks:**
 ```python
-# Persistent FAISS with disk storage
-import pickle
-import os
-
-class VectorStoreService:
-    def __init__(self):
-        self.index_path = "vector_store.faiss"
-        self.docstore_path = "docstore.pkl"
-        
-    def save_vector_store(self):
-        """Save FAISS index and docstore to disk"""
-        faiss.write_index(self.vector_store.index, self.index_path)
-        with open(self.docstore_path, "wb") as f:
-            pickle.dump(self.vector_store.docstore, f)
-    
-    def load_vector_store(self):
-        """Load FAISS index from disk"""
-        if os.path.exists(self.index_path):
-            index = faiss.read_index(self.index_path)
-            with open(self.docstore_path, "rb") as f:
-                docstore = pickle.load(f)
-            # Reconstruct vector store
-            self._vector_store = FAISS(
-                embedding_function=self.embeddings,
-                index=index,
-                docstore=docstore,
-                index_to_docstore_id=self._load_index_mapping()
-            )
+# Still needed: Embedding model caching and performance optimization
+@lru_cache(maxsize=1)
+def get_embeddings_model():
+    return HuggingFaceEmbeddings(model_name=settings.embedding_model)
 
 # Consider upgrading to Qdrant or Weaviate for production
 # pip install qdrant-client
@@ -664,7 +655,7 @@ python-dotenv>=1.0.0
 - [ ] Migrate from SQLite to PostgreSQL
 - [ ] Implement connection pooling
 - [ ] Add Redis caching layer
-- [ ] Make vector store persistent
+- [x] **Make vector store persistent** ✅ **COMPLETED** - FAISS now saves/loads from disk automatically
 - [ ] Implement async database operations
 - [ ] Add background task processing
 - [ ] Optimize embedding model loading

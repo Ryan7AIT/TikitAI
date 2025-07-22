@@ -3,6 +3,7 @@ Vector store service for managing FAISS operations.
 """
 import os
 import glob
+import pickle
 import logging
 from typing import List, Optional
 
@@ -28,6 +29,11 @@ class VectorStoreService:
         self._vector_store: Optional[FAISS] = None
         self._embeddings: Optional[HuggingFaceEmbeddings] = None
         
+        # Persistent storage paths
+        self.index_path = "vector_store.faiss"
+        self.docstore_path = "docstore.pkl"
+        self.index_mapping_path = "index_mapping.pkl"
+        
     @property
     def embeddings(self) -> HuggingFaceEmbeddings:
         """Get or create the embeddings model."""
@@ -45,8 +51,16 @@ class VectorStoreService:
         return self._vector_store
     
     def _initialize_vector_store(self):
-        """Initialize the FAISS vector store."""
+        """Initialize the FAISS vector store, loading from disk if available."""
         logger.info("Initializing vector store...")
+        
+        # Try to load existing vector store from disk
+        if self.load_vector_store():
+            logger.info("Vector store loaded from disk successfully")
+            return
+        
+        # If no existing store, create new one
+        logger.info("Creating new vector store...")
         
         # Get embedding dimension
         embedding_dim = len(self.embeddings.embed_query("hello world"))
@@ -62,12 +76,79 @@ class VectorStoreService:
             index_to_docstore_id={},
         )
         
-        logger.info(f"Vector store initialized with dimension {embedding_dim}")
+        logger.info(f"New vector store initialized with dimension {embedding_dim}")
+        
+    def save_vector_store(self):
+        """Save FAISS index and docstore to disk."""
+        try:
+            if self._vector_store is None:
+                logger.warning("No vector store to save")
+                return
+                
+            logger.info("Saving vector store to disk...")
+            
+            # Save FAISS index
+            faiss.write_index(self._vector_store.index, self.index_path)
+            
+            # Save docstore
+            with open(self.docstore_path, "wb") as f:
+                pickle.dump(self._vector_store.docstore, f)
+                
+            # Save index to docstore ID mapping
+            with open(self.index_mapping_path, "wb") as f:
+                pickle.dump(self._vector_store.index_to_docstore_id, f)
+                
+            logger.info("Vector store saved successfully")
+            
+        except Exception as e:
+            logger.error(f"Error saving vector store: {e}")
+    
+    def load_vector_store(self) -> bool:
+        """Load FAISS index from disk. Returns True if successful, False otherwise."""
+        try:
+            if not all(os.path.exists(path) for path in [self.index_path, self.docstore_path, self.index_mapping_path]):
+                logger.info("No existing vector store files found")
+                return False
+                
+            logger.info("Loading vector store from disk...")
+            
+            # Load FAISS index
+            index = faiss.read_index(self.index_path)
+            
+            # Load docstore
+            with open(self.docstore_path, "rb") as f:
+                docstore = pickle.load(f)
+                
+            # Load index to docstore ID mapping
+            with open(self.index_mapping_path, "rb") as f:
+                index_to_docstore_id = pickle.load(f)
+            
+            # Reconstruct vector store
+            self._vector_store = FAISS(
+                embedding_function=self.embeddings,
+                index=index,
+                docstore=docstore,
+                index_to_docstore_id=index_to_docstore_id
+            )
+            
+            doc_count = self._vector_store.index.ntotal
+            logger.info(f"Vector store loaded successfully with {doc_count} documents")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error loading vector store: {e}")
+            return False
     
     def load_documents_from_data_folder(self):
         """Load and index documents from the data folder based on database sync status."""
         from db import engine
         from models import DataSource
+        
+        # Check if the vector store is already loaded
+        currect_doc_count = self.vector_store.index.ntotal
+        if currect_doc_count > 0:
+            logger.info(f"Vector store already loaded with {currect_doc_count} documents")
+            return
         
         with Session(engine) as session:
             # Get all synced datasources from database
@@ -90,6 +171,10 @@ class VectorStoreService:
                 except Exception as e:
                     logger.error(f"Error processing datasource {source.reference}: {e}")
                     continue
+            
+            # Save vector store after loading documents
+            if total_docs_added > 0:
+                self.save_vector_store()
             
             logger.info(f"Total documents added to vector store: {total_docs_added}")
     
@@ -175,7 +260,13 @@ class VectorStoreService:
         Embed a single datasource using the standardized logic.
         Returns the number of document chunks added.
         """
-        return self._process_single_datasource(datasource)
+        docs_added = self._process_single_datasource(datasource)
+        
+        # Save vector store after embedding new datasource
+        if docs_added > 0:
+            self.save_vector_store()
+            
+        return docs_added
     
     def embed_content_string(self, content: str, source_reference: str) -> int:
         """
@@ -191,6 +282,10 @@ class VectorStoreService:
         if splits:
             self.vector_store.add_documents(splits)
             logger.info(f"Added {len(splits)} document splits from content string")
+            
+            # Save vector store after adding new content
+            self.save_vector_store()
+            
             return len(splits)
         
         return 0
@@ -204,6 +299,9 @@ class VectorStoreService:
         """Add documents to the vector store."""
         logger.info(f"Adding {len(documents)} documents to vector store")
         self.vector_store.add_documents(documents)
+        
+        # Save vector store after adding documents
+        self.save_vector_store()
     
     def similarity_search_with_score(self, query: str, k: Optional[int] = None) -> List[tuple]:
         """Perform similarity search with scores."""
@@ -217,6 +315,14 @@ class VectorStoreService:
     def reset_vector_store(self):
         """Reset the vector store to empty state."""
         logger.info("Resetting vector store")
+        
+        # Remove existing files
+        for path in [self.index_path, self.docstore_path, self.index_mapping_path]:
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info(f"Removed {path}")
+        
+        # Reinitialize
         self._vector_store = None
         self._initialize_vector_store()
     
@@ -228,10 +334,18 @@ class VectorStoreService:
             
             # Get the number of documents in the vector store
             doc_count = self.vector_store.index.ntotal
+            
+            # Check if persistent files exist
+            persistent_files_exist = all(os.path.exists(path) for path in [self.index_path, self.docstore_path, self.index_mapping_path])
+            
             return {
                 "status": "initialized", 
                 "doc_count": doc_count,
-                "embedding_dimension": self.vector_store.index.d
+                "embedding_dimension": self.vector_store.index.d,
+                "persistent_storage": persistent_files_exist,
+                "index_file_exists": os.path.exists(self.index_path),
+                "docstore_file_exists": os.path.exists(self.docstore_path),
+                "mapping_file_exists": os.path.exists(self.index_mapping_path)
             }
         except Exception as e:
             logger.error(f"Error getting vector store info: {e}")

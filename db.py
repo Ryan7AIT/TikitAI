@@ -66,6 +66,14 @@ def create_db_and_tables():
         if cols and not any(row[1] == "workspace_id" for row in cols):
             conn.execute(text("ALTER TABLE conversation ADD COLUMN workspace_id INTEGER"))
             conn.commit()
+
+        cols = conn.execute(text("PRAGMA table_info(user)")).fetchall()
+        if cols and not any(row[1] == "email" for row in cols):
+            conn.execute(text("ALTER TABLE user ADD COLUMN email TEXT"))
+            conn.commit()
+
+        cols = conn.execute(text("PRAGMA table_info(workspace)")).fetchall()
+        
     
     # Initialize external data sources if they don't exist
     _initialize_external_data_sources()

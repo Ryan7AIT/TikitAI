@@ -6,8 +6,10 @@ from sqlmodel import SQLModel, Field
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)
+    email: Optional[str] = Field(default=None, index=True)
     hashed_password: str
     is_admin: bool = False
+    current_workspace_id: Optional[str] = Field(default=None, foreign_key="workspace.id")
 
 
 class UserDataSourceAccess(SQLModel, table=True):
@@ -92,3 +94,21 @@ class RoleAssignment(SQLModel, table=True):
     role_id: int = Field(foreign_key="role.id")
     user_id: int = Field(foreign_key="user.id")
     assigned_at: datetime = Field(default_factory=datetime.utcnow) 
+
+
+class Workspace(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    is_active: bool = Field(default=True)
+
+
+class WorkspaceUser(SQLModel, table=True):
+    """Many-to-many relationship between workspaces and users"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id")
+    user_id: int = Field(foreign_key="user.id")
+    joined_at: datetime = Field(default_factory=datetime.utcnow)
+    role: Optional[str] = Field(default="member")  # "admin", "member", etc. 
