@@ -40,6 +40,8 @@ class DataSourceOut(BaseModel):
     tags: str | None = None
     is_synced: int | None = None
     path: str | None = None
+    owner_id: Optional[int] = None
+    workspace_id: Optional[int] = None
 
     class Config:
         orm_mode = True
@@ -526,8 +528,8 @@ def list_sources(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    sources = session.exec(select(DataSource)).all()
-    return sources
+        sources = session.exec(select(DataSource).where(DataSource.source_type == "file")).all()
+        return sources
 
 
 @router.post("/upload", response_model=List[DataSourceOut])
@@ -539,13 +541,16 @@ async def upload_file(
     _: str = Depends(get_current_user),
 ):
     saved_sources = []
+    # get workspace id from User table
+    workspace_id = _.current_workspace_id
+    owner_id = _.id
     # Save file
     for file in files:
         dest_path = os.path.join(DATA_DIR, file.filename)
         with open(dest_path, "wb") as f:
             f.write(await file.read())
 
-        ds = DataSource(source_type="file", reference=file.filename, size_mb=os.path.getsize(dest_path) / (1024 * 1024), category=category, tags=tags, path=dest_path)
+        ds = DataSource(source_type="file", reference=file.filename, size_mb=os.path.getsize(dest_path) / (1024 * 1024), category=category, tags=tags, path=dest_path, workspace_id=workspace_id, owner_id=owner_id)
         session.add(ds)
         session.commit()
         session.refresh(ds)
@@ -583,9 +588,9 @@ def delete_source(
         raise HTTPException(status_code=404, detail="DataSource not found")
 
     # Remove file if exists
-    if ds.source_type == "file" and os.path.exists(ds.reference):
+    if ds.source_type == "file" and os.path.exists('data/' + ds.reference):
         try:
-            os.remove(ds.reference)
+            os.remove('data/' + ds.reference)
         except Exception:
             pass
 

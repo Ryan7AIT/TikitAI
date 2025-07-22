@@ -43,7 +43,8 @@ class DataSource(SQLModel, table=True):
     tags: Optional[str] = Field(default=None)
     is_synced: Optional[int] = Field(default=None)
     path: Optional[str] = Field(default=None)
-
+    owner_id: Optional[str] = Field(default=None, foreign_key="workspace.id")
+    workspace_id: Optional[int] = Field(default=None, foreign_key="workspace.id")
 class Conversation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str

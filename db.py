@@ -72,7 +72,12 @@ def create_db_and_tables():
             conn.execute(text("ALTER TABLE user ADD COLUMN email TEXT"))
             conn.commit()
 
-        cols = conn.execute(text("PRAGMA table_info(workspace)")).fetchall()
+        # add owner_id to datasource
+        cols = conn.execute(text("PRAGMA table_info(datasource)")).fetchall()
+        if cols and not any(row[1] == "owner_id" for row in cols):
+            conn.execute(text("ALTER TABLE datasource ADD COLUMN owner_id INTEGER"))
+            conn.commit()
+
         
     
     # Initialize external data sources if they don't exist
