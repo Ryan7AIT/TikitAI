@@ -114,23 +114,23 @@ def setup_static_files(app: FastAPI):
     if os.path.isdir(frontend_dir):
         app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
         
-        admin_dir = os.path.join(frontend_dir, "admin")
-        if os.path.isdir(admin_dir):
-            app.mount("/admin", StaticFiles(directory=admin_dir), name="admin")
+        # admin_dir = os.path.join(frontend_dir, "admin")
+        # if os.path.isdir(admin_dir):
+        #     app.mount("/admin", StaticFiles(directory=admin_dir), name="admin")
         
-        # Root route
-        @app.get("/")
-        def serve_index():
-            return FileResponse(os.path.join(frontend_dir, "index.html"))
+        # # Root route
+        # @app.get("/")
+        # def serve_index():
+        #     return FileResponse(os.path.join(frontend_dir, "index.html"))
         
-        # Login routes
-        @app.get("/login.html")
-        def serve_login():
-            return FileResponse(os.path.join(frontend_dir, "login.html"))
+        # # Login routes
+        # @app.get("/login.html")
+        # def serve_login():
+        #     return FileResponse(os.path.join(frontend_dir, "login.html"))
         
-        @app.get("/login")
-        def serve_login_no_ext():
-            return FileResponse(os.path.join(frontend_dir, "login.html"))
+        # @app.get("/login")
+        # def serve_login_no_ext():
+        #     return FileResponse(os.path.join(frontend_dir, "login.html"))
         
         logger.info("Static file serving configured")
     else:

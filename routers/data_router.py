@@ -21,6 +21,12 @@ import requests
 
 import logging
 
+from markdown import markdown
+from weasyprint import HTML
+import tempfile, json
+from fastapi.responses import FileResponse
+
+
 CLICKUP_FILE_PREFIX = "clickup_"
 
 router = APIRouter(prefix="/datasources", tags=["data"])
@@ -528,7 +534,14 @@ def list_sources(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-        sources = session.exec(select(DataSource).where(DataSource.source_type == "file")).all()
+        workspace_id = _.current_workspace_id
+        sources = session.exec(
+            select(DataSource)
+            .where(
+                (DataSource.source_type == "file") &
+                (DataSource.workspace_id == workspace_id)
+            )
+        ).all()
         return sources
 
 
@@ -601,6 +614,149 @@ def delete_source(
     rebuild_vector_store(session)
 
     return {"status": "deleted"}
+
+
+# export pdf
+@router.post("/export-pdf")
+async def export_markdown_to_pdf(
+    md_text: str = Form(...),
+    company_name: str = Form("DATAFIRST"),
+    logo_url: str = Form(None),              # e.g. https://example.com/logo.png
+    stats_json: str = Form("{}")             # JSON string: {"Total Pages": 5, ...}
+):
+    # Convert Markdown to HTML
+    html_md = markdown(md_text)
+
+    # Parse stats
+    try:
+        stats = json.loads(stats_json)
+    except json.JSONDecodeError:
+        stats = {}
+
+    # Build a stats table HTML
+    stats_rows = "".join(
+        f"<tr><th>{key}</th><td>{value}</td></tr>"
+        for key, value in stats.items()
+    )
+    stats_block = f"""
+    <section class="stats">
+      <h2>Document Statistics</h2>
+      <table>
+        <tbody>
+          {stats_rows}
+        </tbody>
+      </table>
+    </section>
+    """ if stats_rows else ""
+
+    # Full HTML template
+    html = f"""
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          @page {{
+            size: A4;
+            margin: 20mm 15mm 20mm 15mm;
+            @bottom-center {{
+              content: "Page " counter(page) " of " counter(pages);
+              font-size: 0.75rem;
+              color: #666;
+            }}
+          }}
+          body {{
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #333;
+            line-height: 1.5;
+          }}
+          header {{
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+          }}
+          header img {{
+            height: 50px;
+            margin-right: 15px;
+          }}
+          header h1 {{
+            font-size: 1.5rem;
+            margin: 0;
+          }}
+          .stats {{
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f9f9f9;
+            border: 1px solid #eee;
+          }}
+          .stats h2 {{
+            font-size: 1.1rem;
+            margin-top: 0;
+          }}
+          .stats table {{
+            width: 100%;
+            border-collapse: collapse;
+          }}
+          .stats th, .stats td {{
+            text-align: left;
+            padding: 4px 8px;
+            border-bottom: 1px solid #eee;
+          }}
+          .markdown-body {{
+            /* GitHub-like Markdown styling */
+            font-size: 0.95rem;
+          }}
+          .markdown-body h1, .markdown-body h2, .markdown-body h3 {{
+            color: #222;
+            margin-top: 1.5em;
+          }}
+          .markdown-body pre, .markdown-body code {{
+            background: #f3f4f6;
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-family: Menlo, monospace;
+          }}
+          .markdown-body blockquote {{
+            border-left: 4px solid #ddd;
+            color: #666;
+            margin: 1em 0;
+            padding-left: 1em;
+            background: #fafafa;
+          }}
+          .markdown-body a {{
+            color: #0366d6;
+            text-decoration: none;
+          }}
+          .markdown-body a:hover {{
+            text-decoration: underline;
+          }}
+        </style>
+      </head>
+      <body>
+        <header>
+          { f'<img src="{logo_url}" alt="Logo">' if logo_url else '' }
+          <h1>{company_name}</h1>
+        </header>
+
+        {stats_block}
+
+        <article class="markdown-body">
+          {html_md}
+        </article>
+      </body>
+    </html>
+    """
+
+    # Render to PDF
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as pdf_file:
+        HTML(string=html).write_pdf(pdf_file.name)
+        return FileResponse(
+            pdf_file.name,
+            media_type="application/pdf",
+            filename="document.pdf"
+        )
 
 
 # ---------------------------------------------------------------------------

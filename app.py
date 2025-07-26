@@ -9,11 +9,8 @@ The application logic has been split into:
 - routers/: API route handlers
 """
 
-# Import the configured FastAPI app from the core module
 from core.app import app
 
-# The app instance is now available for uvicorn to use:
-# uvicorn app:app --reload
 
 if __name__ == "__main__":
     import uvicorn
