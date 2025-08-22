@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     local_model: str = "llama3.2:latest"
     api_model: str = "gemma-3n-e4b-it"
     is_local: bool = False
+    discord_bot_token: str
     
     # Embedding Configuration
     # embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"

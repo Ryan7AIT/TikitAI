@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, exists, select
 
 from db import get_session
 from models import DataSource, ExternalDataSource, ClickUpConnection
@@ -1276,6 +1276,22 @@ def list_available_files(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
 
+@router.get("/files/{reference}/is_in_db")
+def is_file_in_db(
+    reference: str,
+    session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
+):
+    """
+    Check if a file is in the database.
+    
+    Input: 
+    - reference (path parameter) - the file reference to check
+    
+    Output: JSON response with 'exists' field
+    """
+    file_exists = session.query(exists().where(DataSource.reference == reference)).scalar()
+    return {"exists": file_exists}
 
 @router.get("/{source_id}/preview")
 def preview_source(
