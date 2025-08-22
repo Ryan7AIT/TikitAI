@@ -1,9 +1,10 @@
+import os
 import discord
 import aiohttp
 import asyncio
 from discord import Intents
 
-DISCORD_BOT_TOKEN = "DISCORD_TOKEN.GZzSuM.htAnugBUtUExXORM5AdLRVPTiVTG6lfW-OXRec"
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
