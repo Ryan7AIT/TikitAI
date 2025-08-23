@@ -1144,9 +1144,10 @@ def get_file_content(
     # Sanitize filename to prevent directory traversal attacks
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename. Only simple filenames are allowed.")
-    
-    file_path = os.path.join(DATA_DIR, filename)
-    
+
+    workspace_id = _.current_workspace_id
+    file_path = os.path.join(DATA_DIR, "workspaces", str(workspace_id), filename)
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     
