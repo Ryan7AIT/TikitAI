@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     
     # Model Configuration
     local_model: str = "llama3.2:latest"
-    api_model: str = "gemma-3n-e4b-it"
+    api_model: str = "gemma-3n-e4b-it" 
+    # api_model: str = "gemini-2.5-flash-lite"
     is_local: bool = False
     discord_bot_token: str
     
@@ -29,8 +30,10 @@ class Settings(BaseSettings):
     # RAG Configuration
     chunk_size: int = 500
     chunk_overlap: int = 0
-    similarity_search_k: int = 1
-    
+    similarity_search_k: int = 3
+    qdrant_collection: str = "Aidly"
+    qdrant_url: str = "http://localhost:6333"
+
     # API Configuration
     api_title: str = "RAG Chat API "
     cors_origins: List[str] = ["http://localhost:4200"]

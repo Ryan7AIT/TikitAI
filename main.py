@@ -3,7 +3,6 @@ from langchain_huggingface import HuggingFaceEmbeddings
 import faiss
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
-
 import bs4
 from langchain import hub
 from langchain_community.document_loaders import WebBaseLoader
@@ -17,7 +16,10 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.documents import Document
 from langchain_core.tools import tool
 from langchain.chat_models import init_chat_model
-
+from qdrant_client.models import Distance, VectorParams
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
 
 lolcallm = "llama3.2:latest"
 apillm = "gemma-3-1b-it"
@@ -39,50 +41,65 @@ embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-
 
 embedding_dim = len(embeddings.embed_query("hello world"))
 index = faiss.IndexFlatL2(embedding_dim)
+client = QdrantClient('http://localhost:6333')
+vector_size = len(embeddings.embed_query("sample text"))
 
-vector_store = FAISS(
-    embedding_function=embeddings,
-    index=index,
-    docstore=InMemoryDocstore(),
-    index_to_docstore_id={},
+# Always create the vector_store connection
+vector_store = QdrantVectorStore(
+    client=client,
+    collection_name="test",
+    embedding=embeddings,
 )
 
-# step1: load the data from data/.txt files
-file_paths = glob.glob("data/*.txt")
-docs = []
-for path in file_paths:
-    loader = TextLoader(path, encoding='utf-8')
-    docs.extend(loader.load())
+# Only create collection and embed documents if collection doesn't exist
+if not client.collection_exists("test"):
+    client.create_collection(
+        collection_name="test",
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+    )
 
-# docs = loader.load()
+    # step1: load the data from data/.txt files
+    file_paths = glob.glob("data/*.txt")
+    docs = []
+    for path in file_paths:
+        loader = TextLoader(path, encoding='utf-8')
+        docs.extend(loader.load())
 
-# print(docs[0])
+    # docs = loader.load()
 
-# Methode1: split by character count
-# text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-# all_splits = text_splitter.split_documents(docs)
-# print(len(all_splits))
+    # print(docs[0])
 
-# Methode2: split by issue
-# Step 1: Combine all your text into one big string
-raw_text = "\n".join([doc.page_content for doc in docs])
+    # Methode1: split by character count
+    # text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
+    # all_splits = text_splitter.split_documents(docs)
+    # print(len(all_splits))
 
-# Step 2: Split the text by the keyword "Issue"
-issues = raw_text.split("Issue")
+    # Methode2: split by issue
+    # Step 1: Combine all your text into one big string
+    raw_text = "\n".join([doc.page_content for doc in docs])
 
-# Step 3: Re-add the "Issue" word and clean
-chunks = ["Issue" + chunk.strip() for chunk in issues if chunk.strip()]
+    # Step 2: Split the text by the keyword "Issue"
+    issues = raw_text.split("Issue")
 
-# Step 4: Wrap each chunk in a Document
-all_splits = [Document(page_content=chunk) for chunk in chunks]
+    # Step 3: Re-add the "Issue" word and clean
+    chunks = ["Issue" + chunk.strip() for chunk in issues if chunk.strip()]
 
-# Index the chunks
-_=vector_store.add_documents(all_splits)
+    # Step 4: Wrap each chunk in a Document
+    all_splits = [Document(page_content=chunk) for chunk in chunks]
 
-# Define prompt for question-answering
-# N.B. for non-US LangSmith endpoints, you may need to specify
-# api_url="https://api.smith.langchain.com" in hub.pull.
-prompt = hub.pull("rlm/rag-prompt")
+    for i, document in enumerate(all_splits):
+        if i < 2:
+            document.metadata["source"] = f"first"
+        elif i < 3:
+            document.metadata["source"] = f"beginning"
+        else:
+            document.metadata["source"] = "end"
+
+    # Index the chunks
+    _=vector_store.add_documents(all_splits)
+    print("Collection created and documents embedded successfully!")
+else:
+    print("Collection already exists. Using existing collection without re-embedding documents.")
 
 template = """Use the following pieces of context to answer the question at the end.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
@@ -122,7 +139,24 @@ graph_builder.add_edge(START, "retrieve")
 graph = graph_builder.compile()
 
 # Test the application
-response = graph.invoke({"question": "what is overlapping promotions solution?"})
-print(response["answer"])
+# response = graph.invoke({"question": "what is overlapping promotions solution?"})
+# print(response["answer"])
 
 
+
+retrieved_docs = vector_store.similarity_search(
+    "showing not all families in statisic",
+    k=3,
+    filter=models.Filter(
+        must=[
+            models.FieldCondition(
+                key="metadata.source",
+                match=models.MatchValue(value="end")
+            )
+        ]
+    )
+)
+print(f"Retrieved {len(retrieved_docs)} documents:")
+for doc in retrieved_docs:
+    print("docs i: ----------------------------")
+    print(doc.page_content, doc.metadata)
