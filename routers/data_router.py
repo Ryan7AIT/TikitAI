@@ -1,18 +1,14 @@
 import os
-import glob
 from datetime import datetime
 from typing import List
 from typing import Optional
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import BaseModel
 from sqlmodel import Session, exists, select
-
 from db import get_session
 from models import DataSource, ExternalDataSource, ClickUpConnection
 from auth import get_current_user
 
-# Reuse vector store and helper from app
 from services.vector_service import get_vector_service
 from langchain_community.document_loaders import TextLoader, PyPDFLoader, WebBaseLoader
 from langchain_core.documents import Document
@@ -20,7 +16,6 @@ from routers.clickup_router import _fetch_comments, _make_headers
 import requests
 
 import logging
-
 from markdown import markdown
 from weasyprint import HTML
 import tempfile, json
@@ -28,12 +23,9 @@ from fastapi.responses import FileResponse
 
 
 CLICKUP_FILE_PREFIX = "clickup_"
-
 router = APIRouter(prefix="/datasources", tags=["data"])
-
-DATA_DIR = "data"  # ensure exists
+DATA_DIR = "data"  
 os.makedirs(DATA_DIR, exist_ok=True)
-
 
 class DataSourceOut(BaseModel):
     id: int
@@ -125,6 +117,52 @@ class ClickUpTicket(BaseModel):
     class Config:
         orm_mode = True
 
+class ConnectExternalPayload(BaseModel):
+    api_token: str
+    team: Optional[str] = None
+    list: Optional[str] = None
+
+class UrlPayload(BaseModel):
+    url: str
+
+class FileContentResponse(BaseModel):
+    filename: str
+    content: str
+    size_bytes: int
+
+    class Config:
+        orm_mode = True
+
+class SaveFileRequest(BaseModel):
+    content: str
+
+    class Config:
+        orm_mode = True
+
+class SaveFileResponse(BaseModel):
+    filename: str
+    message: str
+    size_bytes: int
+
+    class Config:
+        orm_mode = True
+
+class FileInfo(BaseModel):
+    filename: str
+    size_bytes: int
+    modified_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class ListFilesResponse(BaseModel):
+    files: List[FileInfo]
+    total_count: int
+
+    class Config:
+        orm_mode = True
+
+
 @router.get("/external", response_model=List[ExternalDataSourceOut])
 def get_external_data(
     session: Session = Depends(get_session),
@@ -144,10 +182,6 @@ def get_external_data(
     
     return result
 
-class ConnectExternalPayload(BaseModel):
-    api_token: str
-    team: Optional[str] = None
-    list: Optional[str] = None
 
 @router.post("/external/{source_id}/connect")
 def connect_external_data(
@@ -400,7 +434,6 @@ def get_external_data_tasks(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch tasks: {str(e)}")
 
-
 @router.get("/external/{source_id}/clickup/tickets", response_model=List[ClickUpTicket])
 def get_clickup_tickets(
     source_id: int,
@@ -468,7 +501,6 @@ def get_clickup_tickets(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch tickets: {str(e)}")
 
-
 def _fetch_tasks_from_list(api_token: str, list_id: str,session: Session) -> List[ClickUpTicket]:
     """Helper function to fetch tasks from a specific ClickUp list."""
     from routers.clickup_router import _make_headers
@@ -523,10 +555,7 @@ def _fetch_tasks_from_list(api_token: str, list_id: str,session: Session) -> Lis
             tickets.append(ticket)
 
     return tickets
-
-
 # end of external data
-
 
 # start of local data
 @router.get("/", response_model=List[DataSourceOut])
@@ -544,22 +573,25 @@ def list_sources(
         ).all()
         return sources
 
-
 @router.post("/upload", response_model=List[DataSourceOut])
 async def upload_file(
     files: List[UploadFile] = File(...),
     category: str = Form(...),
     tags: str = Form(...),
+    workspace_id: str = Form(None),
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
     saved_sources = []
-    # get workspace id from User table
-    workspace_id = _.current_workspace_id
+    workspace_id = workspace_id  or _.current_workspace_id
     owner_id = _.id
+
+    workspace_dir = os.path.join(DATA_DIR, "workspaces", str(workspace_id))
+    os.makedirs(workspace_dir, exist_ok=True)
+
     # Save file
     for file in files:
-        dest_path = os.path.join(DATA_DIR, file.filename)
+        dest_path = os.path.join(workspace_dir, file.filename)
         with open(dest_path, "wb") as f:
             f.write(await file.read())
 
@@ -569,13 +601,7 @@ async def upload_file(
         session.refresh(ds)
         saved_sources.append(ds)
 
-    # Create record
     return saved_sources
-
-
-class UrlPayload(BaseModel):
-    url: str
-
 
 @router.post("/add-url", response_model=DataSourceOut)
 def add_url(
@@ -588,7 +614,6 @@ def add_url(
     session.commit()
     session.refresh(ds)
     return ds
-
 
 @router.delete("/{source_id}")
 def delete_source(
@@ -614,7 +639,6 @@ def delete_source(
     rebuild_vector_store(session)
 
     return {"status": "deleted"}
-
 
 # export pdf
 @router.post("/export-pdf")
@@ -758,7 +782,6 @@ async def export_markdown_to_pdf(
             filename="document.pdf"
         )
 
-
 # ---------------------------------------------------------------------------
 # Helper functions for ClickUp task synchronization
 # ---------------------------------------------------------------------------
@@ -830,11 +853,9 @@ def _update_datasource_metadata(ds: DataSource, file_path: str, task_data: dict)
         assignees = [assignee.get("username", "") for assignee in task_data.get("assignees", [])]
         ds.tags = ", ".join(assignees) if assignees else None
 
-
 def _embed_content(content: str, source_reference: str) -> int:
     """Split the content and add each chunk to the vector store using standardized logic. Returns number of chunks added."""
     return get_vector_service().embed_content_string(content, source_reference)
-
 
 def _mark_as_synced(ds: DataSource) -> None:
     """Update DataSource flags to indicate successful sync."""
@@ -842,7 +863,6 @@ def _mark_as_synced(ds: DataSource) -> None:
 
     ds.last_synced_at = _dt.utcnow()
     ds.is_synced = 1
-
 
 def _sync_clickup_task(ticket_id: str, session: Session) -> dict:
     """Orchestrate ClickUp task synchronization and return a response payload."""
@@ -1109,30 +1129,6 @@ def rebuild_vector_store(session: Session):
     logging.info(f"Vector store rebuilt with {total_docs_added} document chunks from {len(synced_sources)} synced datasources")
 
 # markdown preview routes
-class FileContentResponse(BaseModel):
-    filename: str
-    content: str
-    size_bytes: int
-
-    class Config:
-        orm_mode = True
-
-
-class SaveFileRequest(BaseModel):
-    content: str
-
-    class Config:
-        orm_mode = True
-
-
-class SaveFileResponse(BaseModel):
-    filename: str
-    message: str
-    size_bytes: int
-
-    class Config:
-        orm_mode = True
-
 
 @router.get("/files/{filename}/content", response_model=FileContentResponse)
 def get_file_content(
@@ -1192,13 +1188,15 @@ def save_file_content(
     # Sanitize filename to prevent directory traversal attacks
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename. Only simple filenames are allowed.")
-    
-    file_path = os.path.join(DATA_DIR, filename)
-    
+
+
     try:
         # Ensure data directory exists
-        os.makedirs(DATA_DIR, exist_ok=True)
-        
+        workspace_id = _.current_workspace_id
+        file_path = os.path.join(DATA_DIR, "workspaces", str(workspace_id), filename)
+
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
         # Write content to file (this will overwrite existing file)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(request.content)
@@ -1214,23 +1212,6 @@ def save_file_content(
         raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
 
 
-class FileInfo(BaseModel):
-    filename: str
-    size_bytes: int
-    modified_at: datetime
-
-    class Config:
-        orm_mode = True
-
-
-class ListFilesResponse(BaseModel):
-    files: List[FileInfo]
-    total_count: int
-
-    class Config:
-        orm_mode = True
-
-
 @router.get("/files", response_model=ListFilesResponse)
 def list_available_files(
     _: str = Depends(get_current_user),
@@ -1242,15 +1223,14 @@ def list_available_files(
     Output: ListFilesResponse with array of files and total count
     """
     try:
-        # Ensure data directory exists
         os.makedirs(DATA_DIR, exist_ok=True)
-        
+        workspace_id = _.current_workspace_id
+        current_workspace = os.path.join(DATA_DIR, "workspaces", str(workspace_id))
         files = []
-        
-        # Get all files in the data directory
-        for filename in os.listdir(DATA_DIR):
-            file_path = os.path.join(DATA_DIR, filename)
-            
+
+        for filename in os.listdir(current_workspace):
+            file_path = os.path.join(current_workspace, filename)
+
             # Skip directories and ClickUp files
             if not os.path.isfile(file_path) or filename.startswith("clickup_"):
                 continue
@@ -1266,7 +1246,7 @@ def list_available_files(
             ))
         
         # Sort files by filename
-        files.sort(key=lambda x: x.filename)
+        # files.sort(key=lambda x: x.filename)
         
         return ListFilesResponse(
             files=files,
