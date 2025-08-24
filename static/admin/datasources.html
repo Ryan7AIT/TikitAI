@@ -45,13 +45,26 @@
         </section>
     </main>
 
+    <!-- Include auth manager -->
+    <script src="/auth.js"></script>
     <script>
-        const token = localStorage.getItem('token');
-        if (!token) location.href = '/login';
+        // Require authentication
+        if (!requireAuth()) {
+            // requireAuth() already handles redirect if needed
+        }
 
-        function listSources() {
-            fetch('/datasources/', { headers: { Authorization: `Bearer ${token}` } })
-                .then(r => r.json()).then(renderSources);
+        async function listSources() {
+            try {
+                const response = await makeAuthenticatedRequest('/datasources/');
+                if (response.ok) {
+                    const data = await response.json();
+                    renderSources(data);
+                } else {
+                    console.error('Failed to fetch datasources');
+                }
+            } catch (error) {
+                console.error('Error fetching datasources:', error);
+            }
         }
         function renderSources(arr) {
             const ul = document.getElementById('source-list');

@@ -12,6 +12,16 @@ class User(SQLModel, table=True):
     current_workspace_id: Optional[str] = Field(default=None, foreign_key="workspace.id")
 
 
+class RefreshToken(SQLModel, table=True):
+    """Stores refresh tokens for JWT authentication"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    token_hash: str = Field(index=True)
+    expires_at: datetime = Field(index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = Field(default=True)
+
+
 class UserDataSourceAccess(SQLModel, table=True):
     """Tracks which users have access to which datasources"""
     id: Optional[int] = Field(default=None, primary_key=True)

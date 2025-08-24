@@ -47,7 +47,8 @@ class Settings(BaseSettings):
     
     # Security Configuration
     secret_key: str = "CHANGE_ME"  # Override in production via env var
-    access_token_expire_minutes: int = 60 * 24  # 24 hours
+    access_token_expire_minutes: int = 15  # 15 minutes (short-lived)
+    refresh_token_expire_days: int = 30  # 30 days (long-lived)
     
     class Config:
         env_file = ".env"
