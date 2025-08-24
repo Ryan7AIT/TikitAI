@@ -49,7 +49,7 @@ def login(payload: LoginPayload, response: Response, session: Session = Depends(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,  # Set to True in production with HTTPS
+        secure=False,  # Set to True in production with HTTPS
         samesite="strict",
         max_age=30 * 24 * 60 * 60  # 30 days in seconds
     )
@@ -108,7 +108,6 @@ def refresh_access_token(
 
 @router.post("/logout")
 def logout(
-    payload: RefreshPayload = None,
     refresh_token_cookie: Optional[str] = Cookie(None, alias="refresh_token"),
     response: Response = None,
     session: Session = Depends(get_session),
@@ -117,9 +116,6 @@ def logout(
     """Logout user by invalidating refresh token."""
     # Try to get refresh token from cookie first, then from request body
     refresh_token = refresh_token_cookie
-    if not refresh_token and payload:
-        refresh_token = payload.refresh_token
-    
     if refresh_token:
         invalidate_refresh_token(refresh_token, session)
     
