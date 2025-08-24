@@ -10,6 +10,7 @@ from sqlmodel import Session
 from db import get_session
 from models import Message, Conversation
 from services.rag_service import get_rag_service
+from services.rag_logger import get_rag_logger, RetrievedDocument
 from config.settings import get_settings
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -45,13 +46,19 @@ async def chat_endpoint(
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     
     logger.info(f"Processing chat request: {payload.question[:50]}...")
+    rag_logger = get_rag_logger()
     
     # Process question through RAG pipeline
     start = time.time()
+    error_message = None
+    answer = ""
+    rag_metrics = {}
+    
     try:
         rag_service = get_rag_service()
-        answer = rag_service.ask_question(payload.question)
+        answer, rag_metrics = rag_service.ask_question(payload.question)
     except Exception as e:
+        error_message = str(e)
         logger.error(f"Error processing question: {e}")
         # Provide a user-friendly error message instead of raising HTTP exception
         answer = "I'm having trouble processing your question right now. Please try again."
@@ -79,8 +86,43 @@ async def chat_endpoint(
     )
     session.add(msg)
     session.commit()
+    session.refresh(msg)
     
-    # Log interaction
+    # Convert retrieved docs info to RetrievedDocument objects for logging
+    retrieved_docs = []
+    if rag_metrics.get("retrieved_docs_info"):
+        for doc_info in rag_metrics["retrieved_docs_info"]:
+            retrieved_doc = RetrievedDocument(
+                doc_id=doc_info.get("doc_id", "unknown"),
+                score=doc_info.get("score", 0.0),
+                source=doc_info.get("source"),
+                workspace_id=doc_info.get("workspace_id")
+            )
+            retrieved_docs.append(retrieved_doc)
+    
+    # Log the complete interaction to JSONL
+    try:
+        # Get user ID from request headers or use IP as fallback
+        user_id = request.headers.get("X-User-ID") or request.client.host if request.client else "anonymous"
+        
+        rag_logger.log_interaction(
+            user_query=payload.question,
+            response=answer,
+            latency_ms=latency_ms,
+            retrieved_docs=retrieved_docs,
+            retrieval_latency_ms=rag_metrics.get("retrieval_latency_ms"),
+            generation_latency_ms=rag_metrics.get("generation_latency_ms"),
+            user_id=user_id,
+            conversation_id=conv_id,
+            message_id=msg.id,
+            model_name=rag_metrics.get("model_name"),
+            temperature=rag_metrics.get("temperature"),
+            error=error_message
+        )
+    except Exception as log_error:
+        logger.error(f"Failed to log RAG interaction: {log_error}")
+    
+    # Log interaction (legacy format)
     client_ip = request.client.host if request.client else "unknown"
     safe_q = payload.question.replace("\t", " ").replace("\n", " ")
     safe_a = answer.replace("\t", " ").replace("\n", " ")

@@ -2,7 +2,8 @@
 RAG service for managing the retrieval-augmented generation pipeline.
 """
 import logging
-from typing import List, Optional
+import time
+from typing import List, Optional, Tuple
 
 from langchain_community.chat_models import ChatOllama
 from langchain.chat_models import init_chat_model
@@ -22,6 +23,9 @@ class State(TypedDict):
     question: str
     context: List[Document]
     answer: str
+    retrieval_latency_ms: Optional[int]
+    generation_latency_ms: Optional[int]
+    retrieved_docs_info: List[dict]
 
 
 class RAGService:
@@ -121,6 +125,7 @@ class RAGService:
     
     def _retrieve(self, state: State) -> dict:
         """Retrieve relevant documents for the question."""
+        start_time = time.time()
         question = state["question"].lower().strip()
         
         # Check for simple greetings
@@ -131,7 +136,12 @@ class RAGService:
         
         if any(greeting in question for greeting in greetings) and len(question.split()) <= 3:
             logger.info("Simple greeting detected, skipping retrieval")
-            return {"context": []}
+            retrieval_time = int((time.time() - start_time) * 1000)
+            return {
+                "context": [],
+                "retrieval_latency_ms": retrieval_time,
+                "retrieved_docs_info": []
+            }
         
         try:
             # Get documents with scores
@@ -140,20 +150,52 @@ class RAGService:
                 k=self.settings.similarity_search_k
             )
             
+            retrieval_time = int((time.time() - start_time) * 1000)
+            
             if retrieved_docs_with_scores:
-                doc, score = retrieved_docs_with_scores[0]
-                logger.info(f"Retrieved document with similarity score: {score}")
-                return {"context": [doc]}
+                # Extract documents and prepare info for logging
+                context_docs = []
+                docs_info = []
+                
+                for doc, score in retrieved_docs_with_scores:
+                    context_docs.append(doc)
+                    
+                    # Create document info for logging
+                    doc_info = {
+                        "doc_id": f"{hash(doc.page_content[:100])}",  # Simple hash-based ID
+                        "score": float(score),
+                        "source": doc.metadata.get("source", "unknown"),
+                        "workspace_id": doc.metadata.get("workspace_id")
+                    }
+                    docs_info.append(doc_info)
+                
+                logger.info(f"Retrieved {len(context_docs)} documents, best score: {retrieved_docs_with_scores[0][1]}")
+                return {
+                    "context": context_docs,
+                    "retrieval_latency_ms": retrieval_time,
+                    "retrieved_docs_info": docs_info
+                }
             else:
                 logger.warning("No documents retrieved")
-                return {"context": []}
+                return {
+                    "context": [],
+                    "retrieval_latency_ms": retrieval_time,
+                    "retrieved_docs_info": []
+                }
                 
         except Exception as e:
+            retrieval_time = int((time.time() - start_time) * 1000)
             logger.error(f"Error during retrieval: {e}")
-            return {"context": []}
+            return {
+                "context": [],
+                "retrieval_latency_ms": retrieval_time,
+                "retrieved_docs_info": []
+            }
     
     def _generate(self, state: State) -> dict:
         """Generate an answer based on the question and context."""
+        start_time = time.time()
+        
         try:
             # Prepare context text
             if state["context"]:
@@ -172,24 +214,37 @@ class RAGService:
             })
             response = self.llm.invoke(messages)
             
-            return {"answer": response.content}
+            generation_time = int((time.time() - start_time) * 1000)
+            
+            return {
+                "answer": response.content,
+                "generation_latency_ms": generation_time
+            }
             
         except Exception as e:
+            generation_time = int((time.time() - start_time) * 1000)
             logger.error(f"Error during generation: {e}")
-            return {"answer": "I'm having trouble processing your question right now. Please try again."}
+            return {
+                "answer": "I'm having trouble processing your question right now. Please try again.",
+                "generation_latency_ms": generation_time
+            }
     
-    def ask_question(self, question: str) -> str:
+    def ask_question(self, question: str) -> Tuple[str, dict]:
         """
-        Process a question through the RAG pipeline and return the answer.
+        Process a question through the RAG pipeline and return the answer with metrics.
         
         Args:
             question: The user's question
             
         Returns:
-            The generated answer
+            Tuple of (answer, metrics_dict) where metrics contains:
+            - retrieval_latency_ms
+            - generation_latency_ms
+            - retrieved_docs_info
+            - model_name
         """
         if not question or not question.strip():
-            return "I didn't receive a question. Could you please ask something?"
+            return "I didn't receive a question. Could you please ask something?", {}
         
         try:
             logger.info(f"Processing question: {question[:100]}...")
@@ -197,12 +252,22 @@ class RAGService:
             result = self.rag_graph.invoke({"question": question})
             answer = result.get("answer", "I wasn't able to generate an answer.")
             
+            # Collect metrics
+            metrics = {
+                "retrieval_latency_ms": result.get("retrieval_latency_ms"),
+                "generation_latency_ms": result.get("generation_latency_ms"),
+                "retrieved_docs_info": result.get("retrieved_docs_info", []),
+                "model_name": self.settings.local_model if self.settings.is_local else self.settings.api_model,
+                "temperature": None,  # Could be added to LLM config
+                "num_retrieved": len(result.get("retrieved_docs_info", []))
+            }
+            
             logger.info("Question processed successfully")
-            return answer
+            return answer, metrics
             
         except Exception as e:
             logger.error(f"Error processing question: {e}")
-            return "I'm having trouble processing your question right now. Please try again."
+            return "I'm having trouble processing your question right now. Please try again.", {}
 
 
 # Global RAG service instance
