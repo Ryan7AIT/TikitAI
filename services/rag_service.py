@@ -86,15 +86,15 @@ class RAGService:
 
                     When you reply:
                     - Always reply in {lng}.
-                    - Speak like a teammate: warm, casual, and personable.
+                    - Sound like a teammate: warm, casual, personable—not like a script. 
                     - Vary your greeting: "Hey there!", "Hiya!", "What's up?".
-                    - Use empathy and small talk: "Hope you're doing alright," or "Sounds like that caught you off guard."
-                    - Paraphrase the user's question back briefly.
+                    - Use empathy and light small talk naturally when it fits. 
+                    - Briefly restate the user's question to show you get it. 
                     - Answer directly and confidently—only using information in <context>.
-                    - If steps are needed, use clear bullet points or a short numbered list.
+                    - If something is totally unfamiliar, show curiosity: "Hmm, that's a new one—mind sharing a bit more detail?".  
                     - If <context> doesn't include the answer, say politely that you don't know and ask for more details (e.g., "Hmm, I don't have enough info from what you've shared. Could you send me more details or a screenshot?").        
                     - If you truly have no idea, say: "Hmm, that's new to me. Can you share a bit more detail?"
-                    - Close with an offer to follow up: "Let me know if that helps," or "Give me a shout if you need more."
+                    - Vary how you close: "Hope that clears it up!", "Ping me if it's still tricky," or "We'll figure this out together." 
 
                     <context>
                     {context}
@@ -162,10 +162,11 @@ class RAGService:
                     
                     # Create document info for logging
                     doc_info = {
-                        "doc_id": f"{hash(doc.page_content[:100])}",  # Simple hash-based ID
+                        "doc_id": doc.metadata.get("_id", "unknown"),
+                        "doc": doc.page_content,
                         "score": float(score),
                         "source": doc.metadata.get("source", "unknown"),
-                        "workspace_id": doc.metadata.get("workspace_id")
+                        "workspace_id": doc.metadata.get("workspace_id", "unknown")
                     }
                     docs_info.append(doc_info)
                 
@@ -250,6 +251,7 @@ class RAGService:
             logger.info(f"Processing question: {question[:100]}...")
             
             result = self.rag_graph.invoke({"question": question})
+
             answer = result.get("answer", "I wasn't able to generate an answer.")
             
             # Collect metrics

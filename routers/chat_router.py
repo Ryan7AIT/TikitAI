@@ -90,13 +90,15 @@ async def chat_endpoint(
     
     # Convert retrieved docs info to RetrievedDocument objects for logging
     retrieved_docs = []
+
     if rag_metrics.get("retrieved_docs_info"):
         for doc_info in rag_metrics["retrieved_docs_info"]:
             retrieved_doc = RetrievedDocument(
                 doc_id=doc_info.get("doc_id", "unknown"),
+                doc=doc_info.get("doc", ""),
                 score=doc_info.get("score", 0.0),
-                source=doc_info.get("source"),
-                workspace_id=doc_info.get("workspace_id")
+                source=doc_info.get("source", "unknown"),
+                workspace_id=doc_info.get("workspace_id", "unknown")
             )
             retrieved_docs.append(retrieved_doc)
     

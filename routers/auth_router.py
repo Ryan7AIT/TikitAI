@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, Cookie, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Cookie, status, Body
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from typing import Optional
@@ -62,17 +62,13 @@ def login(payload: LoginPayload, response: Response, session: Session = Depends(
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_access_token(
-    payload: RefreshPayload = None,
     refresh_token_cookie: Optional[str] = Cookie(None, alias="refresh_token"),
     response: Response = None,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """Refresh access token using refresh token."""
     # Try to get refresh token from cookie first, then from request body
     refresh_token = refresh_token_cookie
-    if not refresh_token and payload:
-        refresh_token = payload.refresh_token
-    
     if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -62,20 +62,20 @@ def setup_logging():
     )
     
     # Setup interaction logger
-    interaction_logger = logging.getLogger("interactions")
-    if not interaction_logger.handlers:
-        interaction_logger.setLevel(logging.INFO)
-        ih = logging.FileHandler(os.path.join(settings.logs_directory, "interactions.log"))
-        ih.setFormatter(logging.Formatter("%(asctime)s\t%(message)s"))
-        interaction_logger.addHandler(ih)
+    # interaction_logger = logging.getLogger("interactions")
+    # if not interaction_logger.handlers:
+    #     interaction_logger.setLevel(logging.INFO)
+    #     ih = logging.FileHandler(os.path.join(settings.logs_directory, "interactions.log"))
+    #     ih.setFormatter(logging.Formatter("%(asctime)s\t%(message)s"))
+    #     interaction_logger.addHandler(ih)
     
-    # Setup feedback logger
-    feedback_logger = logging.getLogger("feedback")
-    if not feedback_logger.handlers:
-        feedback_logger.setLevel(logging.INFO)
-        fh = logging.FileHandler(os.path.join(settings.logs_directory, "feedback.log"))
-        fh.setFormatter(logging.Formatter("%(asctime)s\t%(message)s"))
-        feedback_logger.addHandler(fh)
+    # # Setup feedback logger
+    # feedback_logger = logging.getLogger("feedback")
+    # if not feedback_logger.handlers:
+    #     feedback_logger.setLevel(logging.INFO)
+    #     fh = logging.FileHandler(os.path.join(settings.logs_directory, "feedback.log"))
+    #     fh.setFormatter(logging.Formatter("%(asctime)s\t%(message)s"))
+    #     feedback_logger.addHandler(fh)
 
 
 def include_routers(app: FastAPI):

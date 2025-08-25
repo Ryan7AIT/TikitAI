@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class RetrievedDocument:
     """Represents a retrieved document with metadata."""
     doc_id: str
+    doc: str
     score: float
     source: Optional[str] = None
     workspace_id: Optional[str] = None
@@ -157,6 +158,7 @@ class RAGLogger:
                 for doc in retrieved_docs:
                     doc_data = {
                         "doc_id": doc.doc_id,
+                        "doc": doc.doc,
                         "score": doc.score,
                         "source": doc.source,
                         "workspace_id": doc.workspace_id
