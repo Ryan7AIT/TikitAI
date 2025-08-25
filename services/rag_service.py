@@ -77,7 +77,7 @@ class RAGService:
             )
             logger.info(f"Using API model: {self.settings.api_model}")
     
-    lng = "French"
+    lng = "English"
     def _initialize_prompt_template(self):
         """Initialize the prompt template."""
         template = """
@@ -210,7 +210,7 @@ class RAGService:
             messages = self.prompt_template.invoke({
                 "question": state["question"], 
                 "context": context_text,
-                "lng": "French"
+                "lng": "English"
             })
             response = self.llm.invoke(messages)
             

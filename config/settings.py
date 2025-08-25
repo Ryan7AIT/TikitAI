@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     max_question_length: int = 1000
     
     # Security Configuration
-    secret_key: str = "CHANGE_ME"  # Override in production via env var
+    # TODO: chnage this in productin using env
+    secret_key: str = "CHANGE_ME"  
     access_token_expire_minutes: int = 15  # 15 minutes (short-lived)
     refresh_token_expire_days: int = 30  # 30 days (long-lived)
     
