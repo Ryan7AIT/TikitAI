@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # Embedding Configuration
     # embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     # use mutlilang model
-    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model: str = "sentence-transformers/all-mpnet-base-v2"
     
     # Database Configuration
     database_url: str = "sqlite:///app.db"

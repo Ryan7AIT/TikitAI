@@ -179,17 +179,37 @@ class VectorStoreService:
 
             # for markdown files
             if path.lower().endswith((".md")):
+                # Extract main title (# header) to prepend to each section
+                main_title = ""
+                title_match = re.search(r'^# (.+)$', raw_text, re.MULTILINE)
+                if title_match:
+                    main_title = f"# {title_match.group(1)}\n\n"
+                
+                # Split by ## sections
                 section_splits = re.split(r"(?=^## )", raw_text, flags=re.MULTILINE)
                 chunks = [s.strip() for s in section_splits if s.strip()]
+                
+                # Filter out title-only chunks and prepend title to section chunks
+                processed_chunks = []
+                for chunk in chunks:
+                    # Skip if it's just the title (starts with # but has no ## sections)
+                    if chunk.startswith('#') and not '##' in chunk:
+                        continue
+                    # If it's a ## section, prepend the main title
+                    elif chunk.startswith('##'):
+                        processed_chunks.append(main_title + chunk)
+                    # Handle any other content
+                    else:
+                        processed_chunks.append(chunk)
 
                 all_splits.extend([
                     Document(
                         page_content=chunk,
                         metadata={"source": path, "workspace_id": workspace_id}
                     )
-                    for chunk in chunks
+                    for chunk in processed_chunks
                 ])
-                logger.info(f"Applied section-based splitting for {path}")
+                logger.info(f"Applied improved section-based splitting for {path}: {len(processed_chunks)} chunks")
 
             # Documentation files ("_docs.txt")
             elif path.lower().endswith(("_docs.txt")):

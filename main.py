@@ -9,6 +9,7 @@ from langchain_community.document_loaders import WebBaseLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import START, StateGraph
+import re
 from typing_extensions import List, TypedDict
 import glob
 from langchain_community.document_loaders import TextLoader
@@ -20,87 +21,127 @@ from qdrant_client.models import Distance, VectorParams
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+import time
 
 lolcallm = "llama3.2:latest"
 apillm = "gemma-3-1b-it"
 GOOGLE_API_KEY="AIzaSyDSW8g-DrBwRYEpuBAgjJHCKOYW0rYK0BQ"
 is_local = False
 
-if is_local:
-    llm = ChatOllama(model=lolcallm)
-else:
-    llm = init_chat_model(
-        model=apillm,
-        model_provider="google_genai",
-        api_key=GOOGLE_API_KEY,
-    )
+from translator import translate_text
 
-# embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+# print("start translation======================================")
+
+# question = "Comment je peut utliser objective par famille"
+# translated = translate_text(question)
+# print("Translated:", translated)
+
+
+# if is_local:
+#     llm = ChatOllama(model=lolcallm)
+# else:
+#     llm = init_chat_model(
+#         model=apillm,
+#         model_provider="google_genai",
+#         api_key=GOOGLE_API_KEY,
+#     )
+
+# embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2") # BAD RESULT EVEN IN ENGLISH
 # use mutlilang model
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+# embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2") #BEST MODEL SO FARE
+# embeddings = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-0.6B") #BAD RESULT IN FRENCH
+# embeddings = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-4B")
+# embeddings = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-large-instruct")
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2") #best model so far
 
-embedding_dim = len(embeddings.embed_query("hello world"))
-index = faiss.IndexFlatL2(embedding_dim)
+# embedding_dim = len(embeddings.embed_query("hello world"))
+# index = faiss.IndexFlatL2(embedding_dim)
 client = QdrantClient('http://localhost:6333')
 vector_size = len(embeddings.embed_query("sample text"))
 
-# Always create the vector_store connection
+# Create collection if it doesn't exist
+if not client.collection_exists("test"):
+    client.create_collection(
+        collection_name="test",
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+    )
+    should_embed = True
+else:
+    # Check if collection is empty
+    collection_info = client.get_collection("test")
+    should_embed = collection_info.points_count == 0
+
+# Create vector store
 vector_store = QdrantVectorStore(
     client=client,
     collection_name="test",
     embedding=embeddings,
 )
 
-# Only create collection and embed documents if collection doesn't exist
-if not client.collection_exists("test"):
-    client.create_collection(
-        collection_name="test",
-        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
-    )
 
-    # step1: load the data from data/.txt files
-    file_paths = glob.glob("data/*.txt")
-    docs = []
+
+# Only embed documents if needed
+print("________________________________________Start embedding______________________________________")
+start_time = time.time()
+if should_embed:
+    # step1: load the data from data/workspaces/*.md files
+    file_paths = glob.glob("data/workspaces/**/*.md")
+    print(f"Found {len(file_paths)} files to process.")
+    
+    all_splits = []
+    
+    # Process each file individually (like in vector_service.py)
     for path in file_paths:
         loader = TextLoader(path, encoding='utf-8')
-        docs.extend(loader.load())
-
-    # docs = loader.load()
-
-    # print(docs[0])
-
-    # Methode1: split by character count
-    # text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-    # all_splits = text_splitter.split_documents(docs)
-    # print(len(all_splits))
-
-    # Methode2: split by issue
-    # Step 1: Combine all your text into one big string
-    raw_text = "\n".join([doc.page_content for doc in docs])
-
-    # Step 2: Split the text by the keyword "Issue"
-    issues = raw_text.split("Issue")
-
-    # Step 3: Re-add the "Issue" word and clean
-    chunks = ["Issue" + chunk.strip() for chunk in issues if chunk.strip()]
-
-    # Step 4: Wrap each chunk in a Document
-    all_splits = [Document(page_content=chunk) for chunk in chunks]
-
-    for i, document in enumerate(all_splits):
-        if i < 2:
-            document.metadata["source"] = f"first"
-        elif i < 3:
-            document.metadata["source"] = f"beginning"
-        else:
-            document.metadata["source"] = "end"
+        docs = loader.load()
+        
+        # Get the content from this specific file
+        raw_text = "\n".join([doc.page_content for doc in docs])
+        
+        # Extract main title (# header) to prepend to each section
+        main_title = ""
+        title_match = re.search(r'^# (.+)$', raw_text, re.MULTILINE)
+        if title_match:
+            main_title = f"# {title_match.group(1)}\n\n"
+        
+        # Split by ## sections (like in vector_service.py)
+        section_splits = re.split(r"(?=^## )", raw_text, flags=re.MULTILINE)
+        # remove white spaces and empty chunks
+        chunks = [chunk.strip() for chunk in section_splits if chunk.strip()]
+        
+        # Filter out the title-only chunk and prepend title to section chunks
+        processed_chunks = []
+        for chunk in chunks:
+            # Skip if it's just the title (starts with # but has no ## sections)
+            if chunk.startswith('#') and not '##' in chunk:
+                continue
+            # If it's a ## section, prepend the main title
+            elif chunk.startswith('##'):
+                processed_chunks.append(main_title + chunk)
+            # Handle any other content (shouldn't happen but just in case)
+            else:
+                processed_chunks.append(chunk)
+        
+        # Create documents with metadata for each chunk
+        file_splits = [
+            Document(
+                page_content=chunk,
+                metadata={"source": path}
+            ) 
+            for chunk in processed_chunks
+        ]
+        
+        all_splits.extend(file_splits)
+        print(f"Processed {path}: {len(file_splits)} chunks")
 
     # Index the chunks
     _=vector_store.add_documents(all_splits)
     print("Collection created and documents embedded successfully!")
 else:
     print("Collection already exists. Using existing collection without re-embedding documents.")
-
+end_time = time.time()
+print(f"Embedding completed in {end_time - start_time:.2f} seconds.")
 template = """Use the following pieces of context to answer the question at the end.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
 Use three sentences maximum and keep the answer as concise as possible.
@@ -122,21 +163,21 @@ class State(TypedDict):
 
 # Define application steps
 
-def retrieve(state: State):
-    retrieved_docs = vector_store.similarity_search(state["question"])
-    return {"context": retrieved_docs}
+# def retrieve(state: State):
+#     retrieved_docs = vector_store.similarity_search(state["question"])
+#     return {"context": retrieved_docs}
 
 
-def generate(state: State):
-    docs_content = "\n\n".join(doc.page_content for doc in state["context"])
-    messages = custom_prompt.invoke({"question": state["question"], "context": docs_content})
-    response = llm.invoke(messages)
-    return {"answer": response.content}
+# def generate(state: State):
+#     docs_content = "\n\n".join(doc.page_content for doc in state["context"])
+#     messages = custom_prompt.invoke({"question": state["question"], "context": docs_content})
+#     response = llm.invoke(messages)
+#     return {"answer": response.content}
 
-# Compile application and test
-graph_builder = StateGraph(State).add_sequence([retrieve, generate])
-graph_builder.add_edge(START, "retrieve")
-graph = graph_builder.compile()
+# # Compile application and test
+# graph_builder = StateGraph(State).add_sequence([retrieve, generate])
+# graph_builder.add_edge(START, "retrieve")
+# graph = graph_builder.compile()
 
 # Test the application
 # response = graph.invoke({"question": "what is overlapping promotions solution?"})
@@ -144,19 +185,19 @@ graph = graph_builder.compile()
 
 
 
-retrieved_docs = vector_store.similarity_search(
-    "showing not all families in statisic",
-    k=3,
-    filter=models.Filter(
-        must=[
-            models.FieldCondition(
-                key="metadata.source",
-                match=models.MatchValue(value="end")
-            )
-        ]
-    )
+start_time = time.time()
+retrieved_docs = vector_store.similarity_search_with_score(
+    # "Comment je peut utiliser  objectif par famille",
+    "How do i use objective per family",
+    # "Hello How are you",
+    # "i am just testing here",
+    k=3
 )
-print(f"Retrieved {len(retrieved_docs)} documents:")
-for doc in retrieved_docs:
-    print("docs i: ----------------------------")
-    print(doc.page_content, doc.metadata)
+end_time = time.time()
+print(f"Retrieved {len(retrieved_docs)} documents in {end_time - start_time:.2f} seconds:")
+for doc, score in retrieved_docs:
+    print(f"Document: ----------------------------")
+    print(doc.page_content)
+    print("score: ")
+    print(score)
+    print(f"Document: ----------------------------")
