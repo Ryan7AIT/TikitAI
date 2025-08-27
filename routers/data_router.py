@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Q
 from pydantic import BaseModel
 from sqlmodel import Session, exists, select
 from db import get_session
-from models import DataSource, ExternalDataSource, ClickUpConnection
+from models import DataSource, ExternalDataSource, ClickUpConnection, UserIntegrations, UserIntegrationCredentials
 from auth import get_current_user
 
 from services.vector_service import get_vector_service
@@ -190,6 +190,7 @@ def connect_external_data(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
+    # TODO: change this to get the api token from the backend
     external_source = session.get(ExternalDataSource, source_id)
     if not external_source:
         raise HTTPException(status_code=404, detail="External data source not found")
@@ -205,6 +206,7 @@ def connect_external_data(
             raise HTTPException(status_code=400, detail=f"Failed to connect to ClickUp: {str(e)}")
         
         # Create or update ClickUp connection
+        # this code is deperacted and i will delete it later
         connection = ClickUpConnection(
             name=f"ClickUp Connection {external_source.id}",
             api_token=payload.api_token,
@@ -218,10 +220,38 @@ def connect_external_data(
         # Update external source
         external_source.is_connected = True
         external_source.connection_id = connection.id
-        from datetime import datetime
         external_source.updated_at = datetime.utcnow()
         session.add(external_source)
         session.commit()
+
+
+        # new methode. the prev code will be deleted later, this is using new db tables
+        user_integration = UserIntegrations(
+            user_id= _.id,
+            integration_id= external_source.id,
+            is_connected= True,
+            created_at = datetime.utcnow(),
+            updated_at = datetime.utcnow()
+        )
+        session.add(user_integration)
+        session.commit()
+        session.refresh(user_integration)
+
+        credentials_data = {
+            "access_token": payload.api_token,
+            "workspace_id": payload.team or "",
+            "list_id": payload.list or "",
+        }
+
+        user_integration_creds = UserIntegrationCredentials(
+            user_integration_id=user_integration.id,
+            credentials=json.dumps(credentials_data),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(user_integration_creds)
+        session.commit()
+        session.refresh(user_integration_creds)
         
         return ExternalDataSourceOut(
             id=external_source.id,

@@ -103,11 +103,29 @@ def _initialize_external_data_sources():
                 "is_connected": False
             },
             {
+                "name": "Slack",
+                "description": "Slack is a messaging app for teams that makes it easy to communicate and collaborate.",
+                "source_type": "slack",
+                "is_connected": False
+            },
+            {
+                "name": "Discord",
+                "description": "Discord is a communication platform designed for creating communities.",
+                "source_type": "discord",
+                "is_connected": False
+            },
+            {
+                "name": "GitHub",
+                "description": "GitHub is a platform for version control and collaboration.",
+                "source_type": "github",
+                "is_connected": False
+            },
+            {
                 "name": "Notion",
                 "description": "Notion is a project management tool that allows you to create and manage your projects.",
                 "source_type": "notion", 
                 "is_connected": False
-            }
+            },
         ]
         
         for source_data in default_sources:

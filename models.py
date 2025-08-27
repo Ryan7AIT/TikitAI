@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from sqlmodel import SQLModel, Field
+from sqlalchemy import Column, JSON, TEXT
 
 
 class User(SQLModel, table=True):
@@ -63,7 +64,7 @@ class Conversation(SQLModel, table=True):
 
 # ----------------------------- External Integrations ----------------------------- #
 
-
+# integrations
 class ExternalDataSource(SQLModel, table=True):
     """Tracks available external data source integrations and their connection status."""
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -83,6 +84,24 @@ class ClickUpConnection(SQLModel, table=True):
     api_token: str
     team: str
     list: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class UserIntegrations(SQLModel, table=True):
+    """Tracks user-specific integrations and their connection status."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id")
+    integration_id: int = Field(foreign_key="externaldatasource.id")
+    is_connected: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+class UserIntegrationCredentials(SQLModel, table=True):
+    """Stores user-specific integration credentials."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_integration_id: int = Field(foreign_key="userintegrations.id")
+    credentials: dict = Field(sa_column=Column(TEXT), default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
