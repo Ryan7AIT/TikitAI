@@ -172,16 +172,22 @@ def get_external_data(
     
     result = []
     for source in external_sources:
+        is_connected = session.exec(
+            select(exists().where(
+                UserIntegrations.user_id == _.id,
+                UserIntegrations.integration_id == source.id
+            ))
+        ).first()
+
         result.append(ExternalDataSourceOut(
             id=source.id,
             name=source.name,
             description=source.description,
-            is_connected=source.is_connected,
+            is_connected= is_connected,
             type=source.source_type
         ))
     
     return result
-
 
 @router.post("/external/{source_id}/connect")
 def connect_external_data(
@@ -205,67 +211,16 @@ def connect_external_data(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to connect to ClickUp: {str(e)}")
         
-        # Create or update ClickUp connection
-        # this code is deperacted and i will delete it later
-        connection = ClickUpConnection(
-            name=f"ClickUp Connection {external_source.id}",
-            api_token=payload.api_token,
-            team=payload.team or "",
-            list=payload.list or ""
-        )
-        session.add(connection)
-        session.commit()
-        session.refresh(connection)
-        
-        # Update external source
-        external_source.is_connected = True
-        external_source.connection_id = connection.id
-        external_source.updated_at = datetime.utcnow()
-        session.add(external_source)
-        session.commit()
-
-
-        # new methode. the prev code will be deleted later, this is using new db tables
-        user_integration = UserIntegrations(
-            user_id= _.id,
-            integration_id= external_source.id,
-            is_connected= True,
-            created_at = datetime.utcnow(),
-            updated_at = datetime.utcnow()
-        )
-        session.add(user_integration)
-        session.commit()
-        session.refresh(user_integration)
-
-        credentials_data = {
-            "access_token": payload.api_token,
-            "workspace_id": payload.team or "",
-            "list_id": payload.list or "",
-        }
-
-        user_integration_creds = UserIntegrationCredentials(
-            user_integration_id=user_integration.id,
-            credentials=json.dumps(credentials_data),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        session.add(user_integration_creds)
-        session.commit()
-        session.refresh(user_integration_creds)
-        
-        return ExternalDataSourceOut(
-            id=external_source.id,
-            name=external_source.name,
-            description=external_source.description,
-            is_connected=True,
-            type=external_source.source_type
-        )
+        return {
+            'succes' : True,
+            'message' : "Successfully connected to ClickUp",
+            'data' : []
+            }
     else:
         raise HTTPException(status_code=400, detail=f"Connection not implemented for {external_source.source_type}")
 
-# get external data details
-@router.get("/external/{source_id}", response_model=ExternalDataSourceDetailsOut)
-def get_external_data_details(
+@router.get("/external/{source_id}/integrations", response_model=List[UserIntegrations])
+def get_user_integrations(
     source_id: int,
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
@@ -274,12 +229,72 @@ def get_external_data_details(
     if not external_source:
         raise HTTPException(status_code=404, detail="External data source not found")
     
+    user_integrations = session.exec(
+        select(UserIntegrations).where(
+            UserIntegrations.integration_id == source_id,
+            UserIntegrations.user_id == _.id
+        )
+    ).all()
+    
+    return user_integrations
+
+# get external data details
+@router.get("/external/{integration_id}", response_model=ExternalDataSourceDetailsOut)
+def get_external_data_details(
+    integration_id: int,
+    session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
+):
+    # source_id = user_integration_id
+    # external_source = session.get(UserIntegrations, integration_id)
+    statement = (
+        select(UserIntegrations, ExternalDataSource)
+        .join(ExternalDataSource, UserIntegrations.integration_id == ExternalDataSource.id)
+        .where(UserIntegrations.id == integration_id, UserIntegrations.user_id == _.id) 
+    )
+
+    user_integration, external_source = session.exec(statement).first()
+    print(external_source)
+    if not external_source:
+        raise HTTPException(status_code=404, detail="External data source not found")
+    
     return ExternalDataSourceDetailsOut(
         id=external_source.id,
-        name=external_source.name,
-        description=external_source.description,
+        name="test",
+        description="tese description",
         is_connected=external_source.is_connected,
         type=external_source.source_type
+    )
+
+# update extrean data deatils
+@router.patch("/external/{integration_id}", response_model=ExternalDataSourceDetailsOut)
+def update_external_data_details(
+    integration_id: int,
+    session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None)
+):
+    user_integration = session.get(UserIntegrations, integration_id)
+    if not user_integration or user_integration.user_id != _.id:
+        raise HTTPException(status_code=404, detail="User integration not found")
+    
+    # Update name and description in UserIntegrations table
+    if name is not None:
+        user_integration.name = name
+    if description is not None:
+        user_integration.description = description
+    user_integration.updated_at = datetime.utcnow()
+    session.add(user_integration)
+    session.commit()
+    session.refresh(user_integration)
+
+    return ExternalDataSourceDetailsOut(
+        id=user_integration.integration_id,
+        name=user_integration.name or "",
+        description=user_integration.description or "",
+        is_connected=user_integration.is_connected,
+        type=session.get(ExternalDataSource, user_integration.integration_id).source_type
     )
 
 # get external/${dataSourceId}/clickup/teams

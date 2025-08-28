@@ -78,6 +78,15 @@ def create_db_and_tables():
             conn.execute(text("ALTER TABLE datasource ADD COLUMN owner_id INTEGER"))
             conn.commit()
 
+        # add name and description to UserIntegrations
+        cols = conn.execute(text("PRAGMA table_info(userintegrations)")).fetchall()
+        if cols and not any(row[1] == "name" for row in cols):
+            conn.execute(text("ALTER TABLE userintegrations ADD COLUMN name TEXT"))
+            conn.commit()
+        if cols and not any(row[1] == "description" for row in cols):
+            conn.execute(text("ALTER TABLE userintegrations ADD COLUMN description TEXT"))
+            conn.commit()
+
         
     
     # Initialize external data sources if they don't exist

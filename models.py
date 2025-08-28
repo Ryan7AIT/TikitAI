@@ -94,6 +94,8 @@ class UserIntegrations(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     integration_id: int = Field(foreign_key="externaldatasource.id")
     is_connected: bool = Field(default=False)
+    name: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
