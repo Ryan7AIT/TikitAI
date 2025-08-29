@@ -20,7 +20,7 @@ from markdown import markdown
 from weasyprint import HTML
 import tempfile, json
 from fastapi.responses import FileResponse
-
+from urllib.parse import quote_plus
 
 CLICKUP_FILE_PREFIX = "clickup_"
 router = APIRouter(prefix="/datasources", tags=["data"])
@@ -175,7 +175,8 @@ def get_external_data(
         is_connected = session.exec(
             select(exists().where(
                 UserIntegrations.user_id == _.id,
-                UserIntegrations.integration_id == source.id
+                UserIntegrations.integration_id == source.id,
+                UserIntegrations.is_connected == True
             ))
         ).first()
 
@@ -196,7 +197,6 @@ def connect_external_data(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    # TODO: change this to get the api token from the backend
     external_source = session.get(ExternalDataSource, source_id)
     if not external_source:
         raise HTTPException(status_code=404, detail="External data source not found")
@@ -218,6 +218,51 @@ def connect_external_data(
             }
     else:
         raise HTTPException(status_code=400, detail=f"Connection not implemented for {external_source.source_type}")
+
+@router.post("/external/{source_id}/disconnect")
+def disconnect_external_data(
+    source_id: int,
+    session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
+):
+    external_source = session.get(ExternalDataSource, source_id)
+    if not external_source:
+        raise HTTPException(status_code=404, detail="External data source not found")
+    
+    user_integration = session.exec(
+        select(UserIntegrations).where(
+            UserIntegrations.integration_id == source_id,
+            UserIntegrations.user_id == _.id
+        )
+    ).first()
+    
+    if not user_integration:
+        raise HTTPException(status_code=400, detail="No existing connection to disconnect")
+    
+    # Delete associated credentials first
+    credentials = session.exec(
+        select(UserIntegrationCredentials).where(
+            UserIntegrationCredentials.user_integration_id == user_integration.id
+        )
+    ).all()
+    
+    for cred in credentials:
+        session.delete(cred)
+    
+    # Then delete the user integration
+    # session.delete(user_integration)
+    # session.commit()
+    # chnage is_connected to false
+    user_integration.is_connected = False
+    session.add(user_integration)
+    session.commit()
+
+    
+    return {
+        'success': True,
+        'message': f"Disconnected from {external_source.name}",
+        'data' : []
+    }
 
 @router.get("/external/{source_id}/integrations", response_model=List[UserIntegrations])
 def get_user_integrations(
@@ -1371,3 +1416,87 @@ def reload_vector_store(
         "status": "reloaded",
         "vector_store_info": info
     } 
+
+
+
+# some endppoint to manage gitlab connection (TODO: remove them from this file later)
+import httpx
+from fastapi.responses import JSONResponse
+GITLAB_API_URL = "https://gitlab.com/api/v4"
+@router.get("/gitlab/projects")
+async def list_projects(depends=Depends(get_current_user), session: Session = Depends(get_session)):
+    user_integration_id = session.exec(select(UserIntegrations.id).where(
+        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1)
+    )).first()
+    if not user_integration_id:
+        raise HTTPException(status_code=400, detail="No connected integrations found")
+    
+
+    gitlab_info = session.exec(select(UserIntegrationCredentials).where(
+        UserIntegrationCredentials.user_integration_id == user_integration_id)).first()
+
+    token_data = json.loads(gitlab_info.credentials)
+    gitlab_token = token_data.get("access_token")
+
+
+    if not gitlab_token:
+        raise HTTPException(status_code=400, detail="GitLab token not configured")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+                f"{GITLAB_API_URL}/projects?membership=true",
+                headers={"Authorization": f"Bearer {gitlab_token}"}
+            )
+
+    return JSONResponse(resp.json())
+
+class GitlabFileRequest(BaseModel):
+    file_path: str
+    content: str
+    branch: str = "main"
+
+@router.post("/gitlab/projects/{project_id}/file")
+async def create_or_update_file(
+    project_id: int,
+    body: GitlabFileRequest,
+    depends=Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    user_integration_id = session.exec(select(UserIntegrations.id).where(
+        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1)
+    )).first()
+    if not user_integration_id:
+        raise HTTPException(status_code=400, detail="No connected integrations found")
+    
+
+    gitlab_info = session.exec(select(UserIntegrationCredentials).where(
+        UserIntegrationCredentials.user_integration_id == user_integration_id)).first()
+
+    token_data = json.loads(gitlab_info.credentials)
+    gitlab_token = token_data.get("access_token")
+
+    # step 1 , check if file exists
+    url = f"{GITLAB_API_URL}/projects/{project_id}/repository/files/{quote_plus(body.file_path)}"
+    res = requests.get(url, headers={"Authorization": f"Bearer {gitlab_token}"}, params={"ref": body.branch})
+
+    if res.status_code == 200:
+        put_url = url
+        data = {
+            "branch": body.branch,
+            "content": body.content,
+            "commit_message": f"Update {body.file_path}"
+        }
+
+        resp = requests.put(put_url, headers={"Authorization": f"Bearer {gitlab_token}"}, json=data)
+    else:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{GITLAB_API_URL}/projects/{project_id}/repository/files/{quote_plus(body.file_path)}",
+                headers={"Authorization": f"Bearer {gitlab_token}"},
+                json={
+                    "branch": body.branch,
+                    "content": body.content,
+                    "commit_message": f"Update {body.file_path}"
+                }
+            )
+    return JSONResponse(resp.json())
