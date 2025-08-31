@@ -1,6 +1,6 @@
 import requests
 
-API_TOKEN = "pk_55274075_8ZKU4012EPJIQB8HMIGH80CFVI95WBD5"
+API_TOKEN = "pk_55274075_K96NI2LJYRDAXXQNIB01A14ROHA4RVS9"
 team_id = "90121026186"
 space_id = "90124261998"
 list_id = "901210697540"
@@ -8,7 +8,7 @@ task_id = "8699ja7ha"
 headers = {
     "Authorization": API_TOKEN,
 }
-
+# 
 def get_teams():
     url = "https://api.clickup.com/api/v2/team"
     response = requests.get(url, headers=headers)

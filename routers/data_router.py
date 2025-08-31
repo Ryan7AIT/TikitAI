@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from typing import List
 from typing import Optional
+from unittest import result
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import BaseModel
 from sqlmodel import Session, exists, select
@@ -229,32 +230,33 @@ def disconnect_external_data(
     if not external_source:
         raise HTTPException(status_code=404, detail="External data source not found")
     
-    user_integration = session.exec(
+    user_integrations = session.exec(
         select(UserIntegrations).where(
             UserIntegrations.integration_id == source_id,
             UserIntegrations.user_id == _.id
         )
-    ).first()
+    ).all()
     
-    if not user_integration:
+    if not user_integrations:
         raise HTTPException(status_code=400, detail="No existing connection to disconnect")
     
     # Delete associated credentials first
-    credentials = session.exec(
-        select(UserIntegrationCredentials).where(
-            UserIntegrationCredentials.user_integration_id == user_integration.id
-        )
-    ).all()
+    # credentials = session.exec(
+    #     select(UserIntegrationCredentials).where(
+    #         UserIntegrationCredentials.user_integration_id == user_integration.id
+    #     )
+    # ).all()
     
-    for cred in credentials:
-        session.delete(cred)
+    # for cred in credentials:
+        # session.delete(cred)
     
     # Then delete the user integration
     # session.delete(user_integration)
     # session.commit()
-    # chnage is_connected to false
-    user_integration.is_connected = False
-    session.add(user_integration)
+    # change is_connected to false
+    for user_integration in user_integrations:
+        user_integration.is_connected = False
+        session.add(user_integration)
     session.commit()
 
     
@@ -290,16 +292,18 @@ def get_external_data_details(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    # source_id = user_integration_id
-    # external_source = session.get(UserIntegrations, integration_id)
     statement = (
         select(UserIntegrations, ExternalDataSource)
         .join(ExternalDataSource, UserIntegrations.integration_id == ExternalDataSource.id)
-        .where(UserIntegrations.id == integration_id, UserIntegrations.user_id == _.id) 
+        .where(UserIntegrations.integration_id == integration_id, UserIntegrations.user_id == _.id) 
     )
 
-    user_integration, external_source = session.exec(statement).first()
-    print(external_source)
+    result = session.exec(statement).first()
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    user_integration, external_source = result
+
     if not external_source:
         raise HTTPException(status_code=404, detail="External data source not found")
     
@@ -342,109 +346,78 @@ def update_external_data_details(
         type=session.get(ExternalDataSource, user_integration.integration_id).source_type
     )
 
+from typing import Any, List, Optional
+
+class APIResponse(BaseModel):
+    data: Optional[Any]
+    success: bool
+    message: str
+
+class ClickUpTeamOut(BaseModel):
+    id: int
+    name: str
+
+# Import the new ClickUp service
+from services.clickup_service import ClickUpService
+
 # get external/${dataSourceId}/clickup/teams
-@router.get("/external/{source_id}/clickup/teams", response_model=List[ClickUpTeamOut])
+@router.get("/external/{source_id}/clickup/teams", response_model=APIResponse)
 def get_external_data_teams(
     source_id: int,
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    external_source = session.get(ExternalDataSource, source_id)
-    if not external_source:
-        raise HTTPException(status_code=404, detail="External data source not found")
+    clickup_service = ClickUpService(session)
+    result = clickup_service.get_teams(source_id, _.id)
     
-    if external_source.source_type != "clickup" or not external_source.is_connected:
-        raise HTTPException(status_code=400, detail="ClickUp not connected for this data source")
+    # Convert to ClickUpTeamOut format if successful
+    if result["success"] and result["data"]:
+        result["data"] = [
+            ClickUpTeamOut(id=team["id"], name=team["name"])
+            for team in result["data"]
+        ]
     
-    # Get the ClickUp connection
-    connection = session.get(ClickUpConnection, external_source.connection_id)
-    if not connection:
-        raise HTTPException(status_code=400, detail="ClickUp connection not found")
-    
-    # Fetch teams from ClickUp API
-    from routers.clickup_router import _get_teams
-    try:
-        teams = _get_teams(connection.api_token)
-        result = []
-        for team in teams:
-            result.append(ClickUpTeamOut(
-                id=int(team.get("id")),
-                name=team.get("name", "")
-            ))
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch teams: {str(e)}")
+    return APIResponse(**result)
 
-# get external/${dataSourceId}/clickup/teams/${teamId}/spaces
-@router.get("/external/{source_id}/clickup/teams/{team_id}/spaces", response_model=List[ClickUpSpaceOut])
+@router.get("/external/{source_id}/clickup/teams/{team_id}/spaces", response_model=APIResponse)
 def get_external_data_spaces(
     source_id: int,
     team_id: int,
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    external_source = session.get(ExternalDataSource, source_id)
-    if not external_source:
-        raise HTTPException(status_code=404, detail="External data source not found")
+    clickup_service = ClickUpService(session)
+    result = clickup_service.get_spaces(source_id, team_id, _.id)
     
-    if external_source.source_type != "clickup" or not external_source.is_connected:
-        raise HTTPException(status_code=400, detail="ClickUp not connected for this data source")
+    # Convert to ClickUpSpaceOut format if successful
+    if result["success"] and result["data"]:
+        result["data"] = [
+            ClickUpSpaceOut(id=space["id"], name=space["name"], team_id=space["team_id"])
+            for space in result["data"]
+        ]
     
-    # Get the ClickUp connection
-    connection = session.get(ClickUpConnection, external_source.connection_id)
-    if not connection:
-        raise HTTPException(status_code=400, detail="ClickUp connection not found")
-    
-    # Fetch spaces from ClickUp API
-    from routers.clickup_router import _get_spaces
-    try:
-        spaces = _get_spaces(connection.api_token, str(team_id))
-        result = []
-        for space in spaces:
-            result.append(ClickUpSpaceOut(
-                id=int(space.get("id")),
-                name=space.get("name", ""),
-                team_id=team_id
-            ))
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch spaces: {str(e)}")
+    return APIResponse(**result)
 
-@router.get("/external/{source_id}/clickup/spaces/{space_id}/lists", response_model=List[ClickUpListOut])
+@router.get("/external/{source_id}/clickup/spaces/{space_id}/lists", response_model=APIResponse)
 def get_external_data_lists(
     source_id: int,
     space_id: int,
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    external_source = session.get(ExternalDataSource, source_id)
-    if not external_source:
-        raise HTTPException(status_code=404, detail="External data source not found")
+    clickup_service = ClickUpService(session)
+    result = clickup_service.get_lists(source_id, space_id, _.id)
     
-    if external_source.source_type != "clickup" or not external_source.is_connected:
-        raise HTTPException(status_code=400, detail="ClickUp not connected for this data source")
+    # Convert to ClickUpListOut format if successful
+    if result["success"] and result["data"]:
+        result["data"] = [
+            ClickUpListOut(id=list_item["id"], name=list_item["name"], space_id=list_item["space_id"])
+            for list_item in result["data"]
+        ]
     
-    # Get the ClickUp connection
-    connection = session.get(ClickUpConnection, external_source.connection_id)
-    if not connection:
-        raise HTTPException(status_code=400, detail="ClickUp connection not found")
-    
-    # Fetch lists from ClickUp API
-    from routers.clickup_router import _get_lists
-    try:
-        lists = _get_lists(connection.api_token, str(space_id))
-        result = []
-        for list_item in lists:
-            result.append(ClickUpListOut(
-                id=int(list_item.get("id")),
-                name=list_item.get("name", ""),
-                space_id=space_id
-            ))
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch lists: {str(e)}")
+    return APIResponse(**result)
 
-@router.get("/external/{source_id}/clickup/teams/{team_id}/spaces/{space_id}/lists/{list_id}/tasks", response_model=List[ClickUpTaskOut])
+@router.get("/external/{source_id}/clickup/teams/{team_id}/spaces/{space_id}/lists/{list_id}/tasks", response_model=APIResponse)
 def get_external_data_tasks(
     source_id: int,
     team_id: int,
@@ -453,78 +426,30 @@ def get_external_data_tasks(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    external_source = session.get(ExternalDataSource, source_id)
-    if not external_source:
-        raise HTTPException(status_code=404, detail="External data source not found")
+    clickup_service = ClickUpService(session)
+    result = clickup_service.get_tasks(source_id, team_id, space_id, list_id, _.id)
     
-    if external_source.source_type != "clickup" or not external_source.is_connected:
-        raise HTTPException(status_code=400, detail="ClickUp not connected for this data source")
+    # Convert to ClickUpTaskOut format if successful
+    if result["success"] and result["data"]:
+        result["data"] = [
+            ClickUpTaskOut(
+                id=task["id"],
+                name=task["name"],
+                status=task["status"],
+                priority=task["priority"],
+                assignees=task["assignees"],
+                dueDate=task["dueDate"],
+                description=task["description"],
+                listId=task["listId"],
+                isSelected=task["isSelected"],
+                isSynced=task["isSynced"]
+            )
+            for task in result["data"]
+        ]
     
-    # Get the ClickUp connection
-    connection = session.get(ClickUpConnection, external_source.connection_id)
-    if not connection:
-        raise HTTPException(status_code=400, detail="ClickUp connection not found")
-    
-    # Create a temporary ClickUpConnection object for _fetch_tasks
-    from routers.clickup_router import ClickUpConnection as ClickUpConnModel, _fetch_tasks
-    temp_conn = ClickUpConnModel(
-        api_token=connection.api_token,
-        team="",  # we'll set the resolved IDs directly
-        list="",
-        team_id=str(team_id),
-        list_id=str(list_id)
-    )
-    
-    try:
-        # Fetch tasks from ClickUp API
-        tasks = _fetch_tasks(temp_conn)
-        result = []
-        
-        # Check sync status for each task
-        import os
-        DATA_DIR = "data"
-        CLICKUP_FILE_PREFIX = "clickup_"
-        
-        for task in tasks:
-            task_id = task.get("id")
-            file_path = os.path.join(DATA_DIR, f"{CLICKUP_FILE_PREFIX}{task_id}.txt")
-            
-            # Check if task is synced
-            ds = session.exec(select(DataSource).where(DataSource.reference == file_path)).first()
-            is_synced = bool(ds and ds.last_synced_at)
-            
-            # Parse due date
-            due_date = None
-            if task.get("due_date"):
-                from datetime import datetime
-                try:
-                    due_date = datetime.fromtimestamp(int(task.get("due_date")) / 1000)
-                except:
-                    pass
-            
-            # Get assignees
-            assignees = []
-            if task.get("assignees"):
-                assignees = [assignee.get("username", "") for assignee in task.get("assignees", [])]
-            
-            result.append(ClickUpTaskOut(
-                id=int(task_id),
-                name=task.get("name", ""),
-                status=task.get("status", {}).get("status", "") if task.get("status") else "",
-                priority=task.get("priority", {}).get("priority", "") if task.get("priority") else None,
-                assignees=assignees,
-                dueDate=due_date,
-                description=task.get("description", ""),
-                listId=list_id,
-                isSelected=False,  # Default to not selected
-                isSynced=is_synced
-            ))
-        
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch tasks: {str(e)}")
+    return APIResponse(**result)
 
-@router.get("/external/{source_id}/clickup/tickets", response_model=List[ClickUpTicket])
+@router.get("/external/{source_id}/clickup/tickets", response_model=APIResponse)
 def get_clickup_tickets(
     source_id: int,
     team_id: Optional[str] = Query(None, alias="teamId"),
@@ -535,116 +460,29 @@ def get_clickup_tickets(
     _: str = Depends(get_current_user),
 ):
     """Fetch ClickUp tickets/tasks with optional filtering by team, space, list, and search query."""
-    external_source = session.get(ExternalDataSource, source_id)
-    if not external_source:
-        raise HTTPException(status_code=404, detail="External data source not found")
+    clickup_service = ClickUpService(session)
+    result = clickup_service.get_tickets(source_id, _.id, team_id, space_id, list_id, search)
     
-    if external_source.source_type != "clickup" or not external_source.is_connected:
-        raise HTTPException(status_code=400, detail="ClickUp not connected for this data source")
-    
-    # Get the ClickUp connection
-    connection = session.get(ClickUpConnection, external_source.connection_id)
-    if not connection:
-        raise HTTPException(status_code=400, detail="ClickUp connection not found")
-    
-    try:
-        from routers.clickup_router import _get_teams, _get_spaces, _get_lists, _make_headers
-        import requests
-        
-        tickets = []
-        
-        # Determine what to fetch based on provided filters
-        if list_id:
-            # Fetch tasks from specific list
-            tickets.extend(_fetch_tasks_from_list(connection.api_token, list_id,session))
-        elif space_id:
-            # Fetch all lists in space, then all tasks
-            lists = _get_lists(connection.api_token, space_id)
-            for list_item in lists:
-                tickets.extend(_fetch_tasks_from_list(connection.api_token, list_item.get("id"),session))
-        elif team_id:
-            # Fetch all spaces in team, then all lists, then all tasks
-            spaces = _get_spaces(connection.api_token, team_id)
-            for space in spaces:
-                space_lists = _get_lists(connection.api_token, space.get("id"))
-                for list_item in space_lists:
-                    tickets.extend(_fetch_tasks_from_list(connection.api_token, list_item.get("id"),session))
-        else:
-            # No specific filter - fetch from all teams accessible with this token
-            teams = _get_teams(connection.api_token)
-            for team in teams[:1]:  # Limit to first team to avoid timeout
-                spaces = _get_spaces(connection.api_token, team.get("id"))
-                for space in spaces:
-                    space_lists = _get_lists(connection.api_token, space.get("id"))
-                    for list_item in space_lists:
-                        tickets.extend(_fetch_tasks_from_list(connection.api_token, list_item.get("id"),session))
-        
-        # Apply search filter if provided
-        if search:
-            search_lower = search.lower()
-            tickets = [t for t in tickets if search_lower in t.name.lower() or 
-                      (t.description and search_lower in t.description.lower())]
-        
-        
-        return tickets
-        
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch tickets: {str(e)}")
-
-def _fetch_tasks_from_list(api_token: str, list_id: str,session: Session) -> List[ClickUpTicket]:
-    """Helper function to fetch tasks from a specific ClickUp list."""
-    from routers.clickup_router import _make_headers
-    import requests
-    
-    url = f"https://api.clickup.com/api/v2/list/{list_id}/task?include_closed=true"
-    resp = requests.get(url, headers=_make_headers(api_token))
-    
-    if resp.status_code != 200:
-        return []  # Skip lists that can't be accessed
-    
-    data = resp.json()
-    tasks = data.get("tasks", [])
-    
-    tickets = []
-    # Open a single DB session to check sync status for all tasks
-    with session:
-        for task in tasks:
-            # Determine sync status from DataSource table
-            ds_reference = f"clickup_{task.get('id')}.txt"
-            ds = session.exec(select(DataSource).where(DataSource.reference == ds_reference)).first()
-            is_synced = bool(ds and ds.is_synced == 1)
-
-            # Parse due date
-            due_date = None
-            if task.get("due_date"):
-                try:
-                    # ClickUp returns timestamps in milliseconds
-                    timestamp = int(task.get("due_date")) / 1000
-                    from datetime import datetime
-                    due_date = datetime.fromtimestamp(timestamp).isoformat()
-                except:
-                    pass
-            
-            # Get assignees
-            assignees = []
-            if task.get("assignees"):
-                assignees = [assignee.get("username", "") for assignee in task.get("assignees", [])]
-            
-            ticket = ClickUpTicket(
-                id=str(task.get("id")),
-                name=task.get("name", ""),
-                status=task.get("status", {}).get("status", "") if task.get("status") else "",
-                priority=task.get("priority", {}).get("priority", "") if task.get("priority") else None,
-                assignees=assignees,
-                dueDate=due_date,
-                description=task.get("description", ""),
-                listId=str(list_id),
-                isSynced=is_synced,
-                isSelected=False
+    # Convert to ClickUpTicket format if successful
+    if result["success"] and result["data"]:
+        result["data"] = [
+            ClickUpTicket(
+                id=ticket["id"],
+                name=ticket["name"],
+                status=ticket["status"],
+                priority=ticket["priority"],
+                assignees=ticket["assignees"],
+                dueDate=ticket["dueDate"],
+                description=ticket["description"],
+                listId=ticket["listId"],
+                isSynced=ticket["isSynced"],
+                isSelected=ticket["isSelected"]
             )
-            tickets.append(ticket)
+            for ticket in result["data"]
+        ]
+    
+    return APIResponse(**result)
 
-    return tickets
 # end of external data
 
 # start of local data
@@ -1425,8 +1263,9 @@ from fastapi.responses import JSONResponse
 GITLAB_API_URL = "https://gitlab.com/api/v4"
 @router.get("/gitlab/projects")
 async def list_projects(depends=Depends(get_current_user), session: Session = Depends(get_session)):
+
     user_integration_id = session.exec(select(UserIntegrations.id).where(
-        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1)
+        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1) & (UserIntegrations.integration_id == 4)
     )).first()
     if not user_integration_id:
         raise HTTPException(status_code=400, detail="No connected integrations found")
@@ -1463,7 +1302,7 @@ async def create_or_update_file(
     session: Session = Depends(get_session),
 ):
     user_integration_id = session.exec(select(UserIntegrations.id).where(
-        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1)
+        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1) & (UserIntegrations.integration_id == 4)
     )).first()
     if not user_integration_id:
         raise HTTPException(status_code=400, detail="No connected integrations found")

@@ -7,8 +7,9 @@ import json
 from fastapi.responses import RedirectResponse
 import requests
 from jose import jwt, JWTError
+from fastapi import Query
 
-from models import ClickUpConnection, UserIntegrations, UserIntegrationCredentials
+from models import ClickUpConnection, ExternalDataSource, UserIntegrations, UserIntegrationCredentials
 from db import get_session
 from auth import get_current_user
 
@@ -35,18 +36,37 @@ class ConnectionOut(BaseModel):
         orm_mode = True
 
 
-class integrationInfo(BaseModel):
+class savedConnection(BaseModel):
     id: int
     name: str
-    description: str
-    is_connected: bool
-    type: str
+    created_at: datetime
+    updated_at: datetime
+    type: Optional[str] = None   
+
+    class Config:
+        from_attributes = True
 
 
-@router.get("/", response_model=List[ConnectionOut])
-def list_connections(session: Session = Depends(get_session), _: str = Depends(get_current_user)):
-    conns = session.exec(select(ClickUpConnection)).all()
-    return conns
+@router.get("/", response_model=List[savedConnection])
+def list_connections(type: Optional[str] = Query(None), session: Session = Depends(get_session), _: str = Depends(get_current_user)):
+    if type == 'clickup':
+        conns = session.exec(select(UserIntegrations).where(UserIntegrations.integration_id == 1)).all()
+        # TODO: make the id dynamic (using enums 1== clickup)
+    else:
+        conns = session.exec(select(UserIntegrations)).all()
+
+    result = []
+    for conn in conns:
+        data = {
+            "id": conn.id,
+            "name": conn.name,
+            "created_at": conn.created_at,
+            "updated_at": conn.updated_at,
+        }
+        data["type"] = "clickup" if conn.integration_id == 1 else "other"
+        result.append(data)
+    return result
+
 
 @router.post("/")
 def create_connection(payload: ConnectionIn, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
@@ -57,7 +77,7 @@ def create_connection(payload: ConnectionIn, session: Session = Depends(get_sess
     user_integration = UserIntegrations(
         user_id= _.id,
         integration_id=payload.integration_id,
-        is_connected=True,
+        is_connected=False,
         name=payload.name,
         description=f"Connection to ClickUp list {payload.list}"
     )
@@ -80,7 +100,47 @@ def create_connection(payload: ConnectionIn, session: Session = Depends(get_sess
     session.commit()
     session.refresh(user_integration_credentials)
 
-    return user_integration
+    # todo. test the connection here
+    external_source = session.get(ExternalDataSource, payload.integration_id)
+    if not external_source:
+        raise HTTPException(status_code=404, detail="External data source not found")
+    
+    if external_source.source_type == "clickup":
+        # Test the ClickUp connection
+        from routers.clickup_router import _get_teams, _make_headers
+        try:
+            teams = _get_teams(payload.api_token or payload.token)
+            if not teams:
+                raise HTTPException(status_code=400, detail="Unable to fetch teams with provided token")
+            user_integration.is_connected = True
+            session.add(user_integration)
+            session.commit()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to connect to ClickUp: {str(e)}")
+        
+    return {
+        'success': True,
+        'message': "Successfully connected",
+        'data': user_integration
+    }
+
+@router.delete("/{conn_id}")
+def delete_connection(conn_id: int, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
+    conn = session.get(UserIntegrations, conn_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    session.delete(conn)
+    session.commit()
+
+    credentials = session.exec(
+        select(UserIntegrationCredentials).where(
+            UserIntegrationCredentials.user_integration_id == conn.id
+        )
+    ).all()
+    for cred in credentials:
+        session.delete(cred)
+    session.commit()
+    return {"status": "deleted"}
 
 @router.get("/{conn_id}", response_model=ConnectionOut)
 def get_connection(conn_id: int, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
@@ -102,7 +162,21 @@ def update_connection(conn_id: int, payload: ConnectionIn, session: Session = De
     session.refresh(conn)
     return conn
 
-
+# TODO: change this to patch request (cors problem)
+@router.post("/{conn_id}/last-used")
+def update_last_used(conn_id: int, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
+    user_integration = session.get(UserIntegrations, conn_id)
+    if not user_integration:
+        raise HTTPException(status_code=404, detail="User integration not found")
+    user_integration.updated_at = datetime.utcnow()
+    user_integration.is_connected = True
+    session.add(user_integration)
+    session.commit()
+    return {
+        'success': True,
+        'message': 'Last used timestamp updated',
+        'data': None
+    }
 @router.delete("/{conn_id}")
 def delete_connection(conn_id: int, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
     conn = session.get(ClickUpConnection, conn_id)
