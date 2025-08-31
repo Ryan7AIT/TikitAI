@@ -207,7 +207,7 @@ def test_saved_connection(conn_id: int, session: Session = Depends(get_session),
     
 # oauth rooutes
 CLIENT_ID = "4a6783825a88ff007feef387a11fdf1d946d52a588470c5669182bb0ed0aaec8"
-CLIENT_SECRET = "gloas-75a0afa6777b6dce9de503b96095a2b6024fca735b774e5d93364a2f80c4f63a"
+CLIENT_SECRET = "test"
 REDIRECT_URI = "http://localhost:8000/connections/gitlab/callback"
 AUTHORIZE_URL = "https://gitlab.com/oauth/authorize"
 TOKEN_URL = "https://gitlab.com/oauth/token"
