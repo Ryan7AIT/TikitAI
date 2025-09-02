@@ -87,6 +87,8 @@ class VectorStoreService:
     def load_documents_from_data_folder(self):
         """Load and index documents from the data folder based on database sync status."""
 
+        _ = self.vector_store  # This triggers _initialize_vector_store()
+
         # Check if the vector store (Qdrant collection) already has documents
         try:
             collection_info = self.client.get_collection(self.settings.qdrant_collection)
@@ -274,7 +276,7 @@ class VectorStoreService:
         return None
 
 
-    def embed_content_string(self, content: str, source_reference: str) -> int:
+    def embed_content_string(self, content: str, source_reference: str, workspace_id: str = None) -> int:
         """
         Embed a content string using the standardized logic.
         Returns the number of document chunks added.
@@ -282,9 +284,13 @@ class VectorStoreService:
         if not content.strip():
             return 0
             
+        # Use provided workspace_id or try to extract from path
+        if workspace_id is None:
+            workspace_id = self.get_workspace_id_from_path(source_reference)
+            
         doc = Document(page_content=content,
-                    metadata={"source": source_reference, "workspace": self.get_workspace_id_from_path(source_reference)})
-        splits = self.process_documents_for_embedding([doc], [source_reference])
+                    metadata={"source": source_reference, "workspace": workspace_id})
+        splits = self.process_documents_for_embedding([doc], [source_reference], workspace_id)
         
         if splits:
             self.vector_store.add_documents(splits)
@@ -322,6 +328,48 @@ class VectorStoreService:
         return self.vector_store.similarity_search_with_score(
             query, k=k, filter=qdrant_filter
         )
+    
+    def reset_vector_store(self):
+        """Completely clear the vector store"""
+        try:
+            collection_name = self.settings.qdrant_collection or "Aidly"
+            vector_size = len(self.embeddings.embed_query("hello world"))
+            
+            # For Qdrant, you need to delete the collection and recreate it
+            self.client.delete_collection(collection_name=collection_name)
+            self.client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+            )
+            # Reinitialize the vector store after reset
+            self._vector_store = None
+            self._initialize_vector_store()
+            
+            logger.info(f"Reset vector store collection: {collection_name}")
+        except Exception as e:
+            logger.error(f"Error resetting vector store: {e}")
+
+    def delete_documents_by_source(self, source_reference: str):
+        """Delete all documents from a specific source"""
+        try:
+            collection_name = self.settings.qdrant_collection or "Aidly"
+            
+            # For Qdrant, you can delete by metadata filter
+            self.client.delete(
+                collection_name=collection_name,
+                points_selector=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="source",
+                            match=models.MatchValue(value=source_reference)
+                        )
+                    ]
+                )
+            )
+            logger.info(f"Deleted documents from source: {source_reference}")
+        except Exception as e:
+            logger.error(f"Error deleting documents by source {source_reference}: {e}")
+            raise
 
 # Global vector store service instance
 vector_service = VectorStoreService()

@@ -281,3 +281,66 @@ class ClickUpService:
             tickets.append(ticket)
         
         return tickets
+    
+    def sync_task(self, source_id: int, ticket_id: str, user_id: int, workspace_id: str) -> Dict[str, Any]:
+        """Sync a ClickUp task by its task ID and create/update datasource record."""
+        user_integration, error = self._validate_integration(source_id, user_id)
+        if error:
+            return {"data": None, "success": False, "message": error}
+        
+        api_token = self._get_api_token(user_integration)
+        if not api_token:
+            return {"data": None, "success": False, "message": "API token not found"}
+        
+        try:
+            # Import required functions and constants from data_router
+            # TODO: move those function inot this service
+            from routers.data_router import (
+                _fetch_clickup_task, _build_file_content, _write_to_file,
+                _get_or_create_datasource, _update_datasource_metadata,
+                _embed_content, _mark_as_synced, CLICKUP_FILE_PREFIX, DATA_DIR
+            )
+            from routers.clickup_router import _fetch_comments
+            import os
+            
+            # Retrieve task data from ClickUp API
+            task_data = _fetch_clickup_task(api_token, ticket_id)
+            
+            # Fetch comments (for completeness, currently not used in file content)
+            _fetch_comments(ticket_id, api_token)
+            
+            # Build local file content and save to disk
+            base_dir = "data"
+            filename = f"clickup_{ticket_id}.txt"
+            filepath = os.path.join(base_dir, f"workspaces/{workspace_id}/{CLICKUP_FILE_PREFIX}{ticket_id}.txt")
+
+            dir_path = os.path.dirname(filepath)
+            os.makedirs(dir_path, exist_ok=True)
+            content = _build_file_content(ticket_id, task_data)
+            file_path = _write_to_file(content, filepath)
+            
+            # Create or update datasource record with workspace_id
+            ds = _get_or_create_datasource(self.session, filename, file_path, workspace_id)
+            _update_datasource_metadata(ds, file_path, task_data)
+            
+            # Embed content in vector store with workspace_id and mark as synced
+            added_docs = _embed_content(content, filename, workspace_id)
+            _mark_as_synced(ds)
+            
+            # Save changes to database
+            self.session.add(ds)
+            self.session.commit()
+            
+            result_data = {
+                "status": "synced",
+                "added_docs": added_docs,
+                "last_synced_at": ds.last_synced_at,
+                "task_id": ticket_id,
+                "task_name": task_data.get('name', ''),
+                "filename": filename
+            }
+            
+            return {"data": result_data, "success": True, "message": "ClickUp task synced successfully"}
+            
+        except Exception as e:
+            return {"data": None, "success": False, "message": f"Failed to sync ClickUp task: {str(e)}"}

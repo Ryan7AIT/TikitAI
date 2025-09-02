@@ -23,6 +23,8 @@ import tempfile, json
 from fastapi.responses import FileResponse
 from urllib.parse import quote_plus
 
+logger = logging.getLogger(__name__)
+
 CLICKUP_FILE_PREFIX = "clickup_"
 router = APIRouter(prefix="/datasources", tags=["data"])
 DATA_DIR = "data"  
@@ -462,8 +464,8 @@ def get_clickup_tickets(
     """Fetch ClickUp tickets/tasks with optional filtering by team, space, list, and search query."""
     clickup_service = ClickUpService(session)
     result = clickup_service.get_tickets(source_id, _.id, team_id, space_id, list_id, search)
-    
-    # Convert to ClickUpTicket format if successful
+    print("results======================")
+    print(result)
     if result["success"] and result["data"]:
         result["data"] = [
             ClickUpTicket(
@@ -553,6 +555,14 @@ def delete_source(
     if not ds:
         raise HTTPException(status_code=404, detail="DataSource not found")
 
+    # Remove documents from vector store first
+    vector_service = get_vector_service()
+    try:
+        vector_service.delete_documents_by_source(ds.reference)
+        logger.info(f"Removed documents for {ds.reference} from vector store")
+    except Exception as e:
+        logger.error(f"Error removing documents from vector store: {e}")
+
     # Remove file if exists
     if ds.source_type == "file" and os.path.exists('data/' + ds.reference):
         try:
@@ -562,9 +572,6 @@ def delete_source(
 
     session.delete(ds)
     session.commit()
-
-    # Rebuild vector store to ensure removed docs are gone
-    rebuild_vector_store(session)
 
     return {"status": "deleted"}
 
@@ -757,17 +764,16 @@ def _build_file_content(ticket_id: str, task_data: dict) -> str:
 
 def _write_to_file(content: str, filename: str) -> str:
     """Persist the given content inside DATA_DIR and return the file path."""
-    file_path = os.path.join(DATA_DIR, filename)
-    with open(file_path, "w", encoding="utf-8") as fp:
+    with open(filename, "w", encoding="utf-8") as fp:
         fp.write(content)
-    return file_path
+    return filename
 
 
-def _get_or_create_datasource(session: Session, filename: str, file_path: str) -> DataSource:
+def _get_or_create_datasource(session: Session, filename: str, file_path: str, workspace_id: str = None) -> DataSource:
     """Retrieve an existing DataSource or create a new one for the given file."""
     ds = session.exec(select(DataSource).where(DataSource.reference == filename)).first()
     if ds is None:
-        ds = DataSource(source_type="file", reference=filename, path=file_path)
+        ds = DataSource(source_type="file", reference=filename, path=file_path, workspace_id=workspace_id)
     return ds
 
 
@@ -781,9 +787,9 @@ def _update_datasource_metadata(ds: DataSource, file_path: str, task_data: dict)
         assignees = [assignee.get("username", "") for assignee in task_data.get("assignees", [])]
         ds.tags = ", ".join(assignees) if assignees else None
 
-def _embed_content(content: str, source_reference: str) -> int:
+def _embed_content(content: str, source_reference: str, workspace_id: str = None) -> int:
     """Split the content and add each chunk to the vector store using standardized logic. Returns number of chunks added."""
-    return get_vector_service().embed_content_string(content, source_reference)
+    return get_vector_service().embed_content_string(content, source_reference, workspace_id)
 
 def _mark_as_synced(ds: DataSource) -> None:
     """Update DataSource flags to indicate successful sync."""
@@ -826,24 +832,24 @@ def _sync_clickup_task(ticket_id: str, session: Session) -> dict:
 # Route handlers
 # ---------------------------------------------------------------------------
 
-@router.post("/external/{source_id}/clickup/tickets/{ticket_id}/sync")
-def sync_clickup_task(
+@router.post("/external/{source_id}/clickup/tickets/{ticket_id}/sync", response_model=APIResponse)
+async def sync_clickup_task(
     ticket_id: str,
     source_id: int,
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
     """Sync a ClickUp task by its task ID. Creates datasource record if it doesn't exist."""
-
     try:
-        return _sync_clickup_task(ticket_id, session)
-    except HTTPException:
-        # Propagate fastapi HTTP errors as-is
-        raise
+        clickup_service = ClickUpService(session)
+        result = clickup_service.sync_task(source_id, ticket_id, _.id, _.current_workspace_id)
+        return APIResponse(**result)
     except Exception as exc:
-        logging.exception("Unexpected error while syncing ClickUp task")
-        raise HTTPException(status_code=400, detail=f"Failed to sync ClickUp task: {exc}") from exc
-
+        return APIResponse(
+            success=False, 
+            data=None, 
+            message=f"Failed to sync ClickUp task: {str(exc)}"
+        )
 
 @router.post("/regular/{source_id}/sync")
 def sync_regular_source(
@@ -906,28 +912,21 @@ def unsync_regular_source(
     if not ds:
         raise HTTPException(status_code=404, detail="DataSource not found")
 
-    # Remove file if it's a regular file
-    # if ds.source_type == "file" and ds.reference:
-    #     file_path = os.path.join(DATA_DIR, ds.reference) if not os.path.isabs(ds.reference) else ds.reference
-    #     if os.path.exists(file_path):
-    #         try:
-    #             os.remove(file_path)
-    #         except Exception:
-    #             pass
+    # Remove documents from vector store first
+    vector_service = get_vector_service()
+    try:
+        vector_service.delete_documents_by_source(ds.reference)
+        logger.info(f"Removed documents for {ds.reference} from vector store")
+    except Exception as e:
+        logger.error(f"Error removing documents from vector store: {e}")
 
-    # Remove from database
-    # session.delete(ds)
-    # update is_synced to 0
     ds.is_synced = 0
     session.commit()
-
-    # Rebuild vector store to ensure removed docs are gone
-    rebuild_vector_store(session)
 
     return {"status": "unsynced"}
 
 
-@router.post("/external/{source_id}/clickup/tickets/{task_id}/unsync")
+@router.post("/external/{source_id}/clickup/tickets/{task_id}/unsync", response_model=APIResponse)
 def unsync_clickup_task(
     task_id: str,
     session: Session = Depends(get_session),
@@ -935,12 +934,24 @@ def unsync_clickup_task(
 ):
     """Unsync a ClickUp task by its task ID."""
     
-    # Find datasource by filename pattern
-    filename = f"clickup_{task_id}.txt"
+    filename = f"clickup_{task_id}.txt" 
     ds = session.exec(select(DataSource).where(DataSource.reference == filename)).first()
-    
     if not ds:
-        raise HTTPException(status_code=404, detail="ClickUp task not found in datasources")
+        return APIResponse(
+            success=False,
+            data=None,
+            message="ClickUp task not found in datasources"
+        )
+
+    # Remove documents from vector store first
+    from services.vector_service import get_vector_service
+    vector_service = get_vector_service()
+    try:
+        vector_service.delete_documents_by_source(filename)
+        logger.info(f"Removed documents for {filename} from vector store")
+    except Exception as e:
+        logger.error(f"Error removing documents from vector store: {e}")
+        # Continue with file and database cleanup even if vector store cleanup fails
 
     # Remove file
     file_path = os.path.join(DATA_DIR, filename)
@@ -954,10 +965,11 @@ def unsync_clickup_task(
     session.delete(ds)
     session.commit()
 
-    # Rebuild vector store to ensure removed docs are gone
-    rebuild_vector_store(session)
-
-    return {"status": "unsynced"}
+    return APIResponse(
+        success=True,
+        data=None,
+        message="ClickUp task unsynced successfully"
+    )
 
 
 @router.post("/regular/sync")
