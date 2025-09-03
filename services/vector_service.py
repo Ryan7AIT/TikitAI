@@ -360,7 +360,7 @@ class VectorStoreService:
                 points_selector=models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="source",
+                            key="metadata.source",
                             match=models.MatchValue(value=source_reference)
                         )
                     ]
