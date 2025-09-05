@@ -205,12 +205,15 @@ def test_saved_connection(conn_id: int, session: Session = Depends(get_session),
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) 
     
+from config.settings import get_settings
+
 # oauth rooutes
-CLIENT_ID = "4a6783825a88ff007feef387a11fdf1d946d52a588470c5669182bb0ed0aaec8"
-CLIENT_SECRET = "test"
-REDIRECT_URI = "http://localhost:8000/connections/gitlab/callback"
-AUTHORIZE_URL = "https://gitlab.com/oauth/authorize"
-TOKEN_URL = "https://gitlab.com/oauth/token"
+settings = get_settings()
+CLIENT_ID = settings.CLIENT_ID
+CLIENT_SECRET = settings.CLIENT_SECRET
+REDIRECT_URI = settings.REDIRECT_URI
+AUTHORIZE_URL = settings.AUTHORIZE_URL
+TOKEN_URL = settings.TOKEN_URL
 
 @router.get("/gitlab/login")
 def gitlab_login(request: Request):

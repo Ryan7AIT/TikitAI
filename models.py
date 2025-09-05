@@ -96,6 +96,7 @@ class UserIntegrations(SQLModel, table=True):
     is_connected: bool = Field(default=False)
     name: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
+    active_repository_id: Optional[int] = Field(default=None)  
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
@@ -135,6 +136,7 @@ class Workspace(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     is_active: bool = Field(default=True)
+    active_repository_id: Optional[int] = Field(default=None)
 
 
 class WorkspaceUser(SQLModel, table=True):

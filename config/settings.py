@@ -18,7 +18,13 @@ class Settings(BaseSettings):
     # api_model: str = "gemini-2.5-flash-lite"
     is_local: bool = False
     discord_bot_token: str
-    
+
+    CLIENT_ID: str = os.getenv("CLIENT_ID")
+    CLIENT_SECRET: str = os.getenv("CLIENT_SECRET")
+    REDIRECT_URI: str = os.getenv("REDIRECT_URI")
+    AUTHORIZE_URL: str = os.getenv("AUTHORIZE_URL")
+    TOKEN_URL: str = os.getenv("TOKEN_URL")
+
     # Embedding Configuration
     # embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     # use mutlilang model

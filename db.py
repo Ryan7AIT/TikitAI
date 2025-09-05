@@ -86,9 +86,16 @@ def create_db_and_tables():
         if cols and not any(row[1] == "description" for row in cols):
             conn.execute(text("ALTER TABLE userintegrations ADD COLUMN description TEXT"))
             conn.commit()
+        if cols and not any(row[1] == "active_repository_id" for row in cols):
+            conn.execute(text("ALTER TABLE userintegrations ADD COLUMN active_repository_id INTEGER"))
+            conn.commit()
 
-        
-    
+        # add active_repository_id to workspace
+        cols = conn.execute(text("PRAGMA table_info(workspace)")).fetchall()
+        if cols and not any(row[1] == "active_repository_id" for row in cols):
+            conn.execute(text("ALTER TABLE workspace ADD COLUMN active_repository_id INTEGER"))
+            conn.commit()
+
     # Initialize external data sources if they don't exist
     _initialize_external_data_sources()
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Q
 from pydantic import BaseModel
 from sqlmodel import Session, exists, select
 from db import get_session
-from models import DataSource, ExternalDataSource, ClickUpConnection, UserIntegrations, UserIntegrationCredentials
+from models import DataSource, ExternalDataSource, ClickUpConnection, UserIntegrations, UserIntegrationCredentials, Workspace
 from auth import get_current_user
 
 from services.vector_service import get_vector_service
@@ -464,8 +464,6 @@ def get_clickup_tickets(
     """Fetch ClickUp tickets/tasks with optional filtering by team, space, list, and search query."""
     clickup_service = ClickUpService(session)
     result = clickup_service.get_tickets(source_id, _.id, team_id, space_id, list_id, search)
-    print("results======================")
-    print(result)
     if result["success"] and result["data"]:
         result["data"] = [
             ClickUpTicket(
@@ -1305,6 +1303,29 @@ class GitlabFileRequest(BaseModel):
     file_path: str
     content: str
     branch: str = "main"
+
+
+@router.post("/{integration_id}/gitlab/projects/{project_id}/set-active", response_model=APIResponse)
+async def set_active_project(
+    integration_id: int,
+    project_id: int,
+    depends=Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+
+    workspace_id = depends.current_workspace_id
+    if not workspace_id:
+        return APIResponse(success=False, data=None, message="No active workspace found")
+
+
+    # update user workspace with active project id
+    workspace = session.get(Workspace, workspace_id)
+    workspace.active_repository_id = project_id
+    session.add(workspace)
+    session.commit()
+
+    return APIResponse(success=True, data={"project_id": project_id}, message="Active project set")
+
 
 @router.post("/gitlab/projects/{project_id}/file")
 async def create_or_update_file(
