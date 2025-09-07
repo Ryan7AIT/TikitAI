@@ -79,9 +79,11 @@ Example: "xK9mP2vR8nQ7wE3tY6uI1oP5aS8dF2gH"
 | **Session Hijacking**                 | Short access token lifespan       |
 | **Brute Force**                       | Bcrypt password hashing           |
 
-### 🔄 Token Rotation
+### 🔄 Token Rotation & Cleanup
 - Each refresh generates a **new token pair**
 - Old refresh tokens are **immediately invalidated**
+- **Automatic cleanup** removes expired and old inactive tokens
+- **Multi-device support** keeps up to 2 active tokens per user
 - Prevents replay attacks with stolen refresh tokens
 
 ### 🚪 Multi-Device Logout
@@ -116,10 +118,14 @@ def create_access_token(user_id: int) -> str:
     """Create JWT access token (15min expiry)"""
     
 def create_refresh_token(user_id: int, session: Session) -> str:
-    """Create refresh token, store hash in DB (30day expiry)"""
+    """Create refresh token, store hash in DB (30day expiry)
+    Automatically cleans up expired tokens and maintains max 2 active tokens per user"""
     
 def create_token_pair(user_id: int, session: Session) -> Tuple[str, str]:
     """Create both tokens together"""
+
+def cleanup_expired_tokens(user_id: int, session: Session) -> None:
+    """Clean up expired and inactive tokens for a user"""
 ```
 
 #### ✅ Token Verification
@@ -137,7 +143,10 @@ def invalidate_refresh_token(token: str, session: Session) -> bool:
     """Invalidate single refresh token"""
     
 def invalidate_all_user_tokens(user_id: int, session: Session) -> None:
-    """Invalidate all user's refresh tokens (logout all devices)"""
+    """Delete all user's refresh tokens (logout all devices)"""
+
+def cleanup_all_expired_tokens(session: Session) -> dict:
+    """Clean up all expired tokens system-wide (admin function)"""
 ```
 
 ## Frontend Implementation
@@ -248,7 +257,8 @@ const data = await response.json();
 
 **Side Effects:**
 - Sets `refresh_token` HTTP-only cookie
-- Invalidates previous refresh tokens
+- Cleans up expired tokens for the user
+- Maintains maximum of 2 active tokens per user
 
 #### POST `/auth/refresh`
 **Purpose**: Get new token pair using refresh token
@@ -283,6 +293,7 @@ const data = await response.json();
 **Side Effects:**
 - Invalidates current refresh token
 - Clears refresh token cookie
+- Cleans up expired tokens for the user
 
 #### POST `/auth/logout-all`
 **Purpose**: Logout from all devices
@@ -297,7 +308,7 @@ const data = await response.json();
 ```
 
 **Side Effects:**
-- Invalidates ALL user's refresh tokens
+- Deletes ALL user's refresh tokens
 - Clears refresh token cookie
 
 ## Database Schema

@@ -58,8 +58,37 @@ def create_access_token(user_id: int) -> str:
     return encoded_jwt
 
 
+def cleanup_expired_tokens(user_id: int, session: Session) -> None:
+    """Clean up expired and inactive tokens for a user."""
+    # Delete expired tokens
+    expired_tokens = session.exec(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.expires_at < datetime.utcnow()
+        )
+    ).all()
+    
+    for token in expired_tokens:
+        session.delete(token)
+    
+    # Delete old inactive tokens (keep only recent ones for audit)
+    old_inactive = session.exec(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.is_active == False,
+            RefreshToken.created_at < datetime.utcnow() - timedelta(days=7)
+        )
+    ).all()
+    
+    for token in old_inactive:
+        session.delete(token)
+
+
 def create_refresh_token(user_id: int, session: Session) -> str:
     """Create a refresh token and store its hash in the database."""
+    # Clean up expired/old tokens first
+    cleanup_expired_tokens(user_id, session)
+    
     # Generate a secure random token
     token = secrets.token_urlsafe(32)
     
@@ -69,15 +98,19 @@ def create_refresh_token(user_id: int, session: Session) -> str:
     # Set expiration
     expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     
-    # Invalidate old refresh tokens for this user
-    old_tokens = session.exec(
+    # Keep only the 2 most recent active tokens per user (multi-device support)
+    active_tokens = session.exec(
         select(RefreshToken).where(
             RefreshToken.user_id == user_id,
             RefreshToken.is_active == True
-        )
+        ).order_by(RefreshToken.created_at.desc())
     ).all()
-    for old_token in old_tokens:
-        old_token.is_active = False
+    
+    # If user has 2+ active tokens, deactivate the oldest ones
+    if len(active_tokens) >= 2:
+        tokens_to_deactivate = active_tokens[1:]  # Keep the most recent one
+        for old_token in tokens_to_deactivate:
+            old_token.is_active = False
     
     # Store new refresh token
     refresh_token_record = RefreshToken(
@@ -142,16 +175,17 @@ def invalidate_refresh_token(token: str, session: Session) -> bool:
 
 
 def invalidate_all_user_tokens(user_id: int, session: Session) -> None:
-    """Invalidate all refresh tokens for a user (logout from all devices)."""
+    """Delete all refresh tokens for a user (logout from all devices)."""
+    # Clean up expired tokens first
+    cleanup_expired_tokens(user_id, session)
+    
+    # Delete all remaining tokens for this user
     user_tokens = session.exec(
-        select(RefreshToken).where(
-            RefreshToken.user_id == user_id,
-            RefreshToken.is_active == True
-        )
+        select(RefreshToken).where(RefreshToken.user_id == user_id)
     ).all()
     
     for token in user_tokens:
-        token.is_active = False
+        session.delete(token)
     
     session.commit()
 
@@ -206,3 +240,35 @@ def require_admin(current_user: User = Depends(get_current_user)):
             detail="Admin access required"
         )
     return current_user 
+
+
+def cleanup_all_expired_tokens(session: Session) -> dict:
+    """Clean up all expired tokens from the database."""
+    # Delete expired tokens
+    expired_tokens = session.exec(
+        select(RefreshToken).where(RefreshToken.expires_at < datetime.utcnow())
+    ).all()
+    expired_count = len(expired_tokens)
+    
+    for token in expired_tokens:
+        session.delete(token)
+    
+    # Delete old inactive tokens (older than 7 days)
+    old_inactive = session.exec(
+        select(RefreshToken).where(
+            RefreshToken.is_active == False,
+            RefreshToken.created_at < datetime.utcnow() - timedelta(days=7)
+        )
+    ).all()
+    inactive_count = len(old_inactive)
+    
+    for token in old_inactive:
+        session.delete(token)
+    
+    session.commit()
+    
+    return {
+        "expired_tokens_deleted": expired_count,
+        "old_inactive_tokens_deleted": inactive_count,
+        "total_cleaned": expired_count + inactive_count
+    } 

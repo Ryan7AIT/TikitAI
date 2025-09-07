@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, Cookie, status, Body
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 from typing import Optional
+from datetime import datetime
 from db import get_session, engine
-from models import User
+from models import User, RefreshToken
 from auth import (
     authenticate_user, 
     create_token_pair, 
@@ -11,7 +12,10 @@ from auth import (
     invalidate_refresh_token,
     invalidate_all_user_tokens,
     hash_password,
-    get_current_user
+    get_current_user,
+    cleanup_expired_tokens,
+    cleanup_all_expired_tokens,
+    require_admin
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -41,6 +45,9 @@ def login(payload: LoginPayload, response: Response, session: Session = Depends(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
         )
+    
+    # Clean up expired tokens for this user before creating new ones
+    cleanup_expired_tokens(user.id, session)
     
     access_token, refresh_token = create_token_pair(user.id, session)
     
@@ -110,6 +117,9 @@ def logout(
     current_user: User = Depends(get_current_user)
 ):
     """Logout user by invalidating refresh token."""
+    # Clean up expired tokens for this user
+    cleanup_expired_tokens(current_user.id, session)
+    
     # Try to get refresh token from cookie first, then from request body
     refresh_token = refresh_token_cookie
     if refresh_token:
@@ -128,13 +138,52 @@ def logout_all_devices(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """Logout user from all devices by invalidating all refresh tokens."""
+    """Logout user from all devices by deleting all refresh tokens."""
+    # This function now deletes all tokens instead of just marking inactive
     invalidate_all_user_tokens(current_user.id, session)
     
     # Clear the refresh token cookie
     response.delete_cookie(key="refresh_token")
     
     return {"message": "Successfully logged out from all devices"}
+
+
+@router.post("/cleanup-tokens")
+def cleanup_expired_tokens_endpoint(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_admin)
+):
+    """Admin endpoint to clean up all expired and old inactive refresh tokens."""
+    result = cleanup_all_expired_tokens(session)
+    return {
+        "message": "Token cleanup completed",
+        **result
+    }
+
+
+@router.get("/token-stats")
+def get_token_statistics(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_admin)
+):
+    """Admin endpoint to get refresh token statistics."""
+    
+    total_tokens = session.exec(select(func.count(RefreshToken.id))).first()
+    active_tokens = session.exec(
+        select(func.count(RefreshToken.id)).where(RefreshToken.is_active == True)
+    ).first()
+    expired_tokens = session.exec(
+        select(func.count(RefreshToken.id)).where(
+            RefreshToken.expires_at < datetime.utcnow()
+        )
+    ).first()
+    
+    return {
+        "total_tokens": total_tokens,
+        "active_tokens": active_tokens,
+        "expired_tokens": expired_tokens,
+        "cleanup_needed": expired_tokens > 0
+    }
 
 
 @router.on_event("startup")
