@@ -11,6 +11,10 @@ from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langgraph.graph import START, StateGraph
 from typing_extensions import TypedDict
+from qdrant_client.http import models
+from qdrant_client.models import Distance, VectorParams
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
 
 from config.settings import get_settings
 from services.vector_service import get_vector_service
@@ -26,6 +30,7 @@ class State(TypedDict):
     retrieval_latency_ms: Optional[int]
     generation_latency_ms: Optional[int]
     retrieved_docs_info: List[dict]
+    workspace_id: Optional[int]
 
 
 class RAGService:
@@ -144,11 +149,19 @@ class RAGService:
             }
         
         try:
-            # Get documents with scores
+
+            # Get documents with scores, filtering by workspace_id
+            metadata_filter = None
+            if state.get("workspace_id"):
+                metadata_filter = {"metadata.workspace_id": state["workspace_id"]}
+            
             retrieved_docs_with_scores = self.vector_service.similarity_search_with_score(
                 state["question"], 
-                k=self.settings.similarity_search_k
+                k=self.settings.similarity_search_k,
+                metadata_filter=metadata_filter
             )
+
+            print(f"Retrieved {retrieved_docs_with_scores} documents")
             
             retrieval_time = int((time.time() - start_time) * 1000)
             
@@ -230,12 +243,13 @@ class RAGService:
                 "generation_latency_ms": generation_time
             }
     
-    def ask_question(self, question: str) -> Tuple[str, dict]:
+    def ask_question(self, question: str, workspace_id: Optional[int] = None) -> Tuple[str, dict]:
         """
         Process a question through the RAG pipeline and return the answer with metrics.
         
         Args:
             question: The user's question
+            workspace_id: The workspace ID to filter documents by (optional)
             
         Returns:
             Tuple of (answer, metrics_dict) where metrics contains:
@@ -249,8 +263,13 @@ class RAGService:
         
         try:
             logger.info(f"Processing question: {question[:100]}...")
+            if workspace_id:
+                logger.info(f"Filtering by workspace_id: {workspace_id}")
             
-            result = self.rag_graph.invoke({"question": question})
+            result = self.rag_graph.invoke({
+                "question": question, 
+                "workspace_id": workspace_id
+            })
 
             answer = result.get("answer", "I wasn't able to generate an answer.")
             

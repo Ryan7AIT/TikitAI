@@ -863,13 +863,14 @@ def sync_regular_source(
     # Handle regular files and URLs
     documents: List[Document] = []
     dir = 'data'
+    filepath = os.path.join(dir, f"workspaces/{ds.workspace_id}", ds.reference) 
     try:
         if ds.source_type == "file":
             if ds.reference.lower().endswith(".txt") or ds.reference.lower().endswith(".md"):
-                loader = TextLoader(os.path.join(dir, ds.reference), encoding="utf-8")
+                loader = TextLoader(filepath, encoding="utf-8")
                 documents.extend(loader.load())
             elif ds.reference.lower().endswith(".pdf"):
-                loader = PyPDFLoader(os.path.join(dir, ds.reference))
+                loader = PyPDFLoader(filepath)
                 documents.extend(loader.load())
             else:
                 raise ValueError("Unsupported file type")
@@ -884,7 +885,7 @@ def sync_regular_source(
     # Add to vector store using standardized embedding logic
     added_docs = 0
     if documents:
-        splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference])
+        splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference], ds.workspace_id)
         if splits:
             get_vector_service().add_documents(splits)
             added_docs = len(splits)

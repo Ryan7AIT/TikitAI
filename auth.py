@@ -76,7 +76,7 @@ def cleanup_expired_tokens(user_id: int, session: Session) -> None:
         select(RefreshToken).where(
             RefreshToken.user_id == user_id,
             RefreshToken.is_active == False,
-            RefreshToken.created_at < datetime.utcnow() - timedelta(days=7)
+            RefreshToken.created_at < datetime.utcnow() 
         )
     ).all()
     

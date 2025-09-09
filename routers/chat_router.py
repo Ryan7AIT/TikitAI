@@ -8,10 +8,11 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from db import get_session
-from models import Message, Conversation
+from models import Message, Conversation, User
 from services.rag_service import get_rag_service
 from services.rag_logger import get_rag_logger, RetrievedDocument
 from config.settings import get_settings
+from auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class Question(BaseModel):
 async def chat_endpoint(
     payload: Question,
     request: Request,
+    current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """
@@ -37,6 +39,7 @@ async def chat_endpoint(
     Args:
         payload: Question data including the question text and optional conversation ID
         request: FastAPI request object
+        current_user: The authenticated user making the request
         session: Database session
         
     Returns:
@@ -45,7 +48,11 @@ async def chat_endpoint(
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     
-    logger.info(f"Processing chat request: {payload.question[:50]}...")
+    # Check if user has a current workspace
+    if not current_user.current_workspace_id:
+        raise HTTPException(status_code=400, detail="User must have an active workspace")
+    
+    logger.info(f"Processing chat request for user {current_user.id} in workspace {current_user.current_workspace_id}: {payload.question[:50]}...")
     rag_logger = get_rag_logger()
     
     # Process question through RAG pipeline
@@ -56,7 +63,10 @@ async def chat_endpoint(
     
     try:
         rag_service = get_rag_service()
-        answer, rag_metrics = rag_service.ask_question(payload.question)
+        answer, rag_metrics = rag_service.ask_question(
+            payload.question, 
+            workspace_id=current_user.current_workspace_id
+        )
     except Exception as e:
         error_message = str(e)
         logger.error(f"Error processing question: {e}")
@@ -82,7 +92,8 @@ async def chat_endpoint(
         question=payload.question, 
         answer=answer, 
         latency_ms=latency_ms, 
-        conversation_id=conv_id
+        conversation_id=conv_id,
+        user_id=current_user.id
     )
     session.add(msg)
     session.commit()
@@ -104,8 +115,8 @@ async def chat_endpoint(
     
     # Log the complete interaction to JSONL
     try:
-        # Get user ID from request headers or use IP as fallback
-        user_id = request.headers.get("X-User-ID") or request.client.host if request.client else "anonymous"
+        # Use the current user's ID instead of extracting from headers
+        user_id = current_user.id
         
         rag_logger.log_interaction(
             user_query=payload.question,
