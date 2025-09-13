@@ -860,44 +860,10 @@ def sync_regular_source(
     if not ds:
         raise HTTPException(status_code=404, detail="DataSource not found")
 
-    # Handle regular files and URLs
-    documents: List[Document] = []
-    dir = 'data'
-    filepath = os.path.join(dir, f"workspaces/{ds.workspace_id}", ds.reference) 
-    try:
-        if ds.source_type == "file":
-            if ds.reference.lower().endswith(".txt") or ds.reference.lower().endswith(".md"):
-                loader = TextLoader(filepath, encoding="utf-8")
-                documents.extend(loader.load())
-            elif ds.reference.lower().endswith(".pdf"):
-                loader = PyPDFLoader(filepath)
-                documents.extend(loader.load())
-            else:
-                raise ValueError("Unsupported file type")
-        elif ds.source_type == "url":
-            loader = WebBaseLoader(ds.reference)
-            documents.extend(loader.load())
-        else:
-            raise ValueError("Unsupported source type")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Add to vector store using standardized embedding logic
-    added_docs = 0
-    if documents:
-        splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference], ds.workspace_id)
-        if splits:
-            get_vector_service().add_documents(splits)
-            added_docs = len(splits)
-
-    # Mark as synced
-    from datetime import datetime as _dt
-    ds.last_synced_at = _dt.utcnow()
-    ds.is_synced = 1
-    session.add(ds)
-    session.commit()
-
-    return {"status": "synced", "added_docs": added_docs, "last_synced_at": ds.last_synced_at}
+    # Use the extracted helper function
+    result = _sync_single_regular_datasource(ds, session)
+    session.commit()  # Commit the changes for single datasource sync
+    return result
 
 
 @router.post("/regular/{source_id}/unsync")
@@ -971,62 +937,94 @@ def unsync_clickup_task(
     )
 
 
+def _sync_single_regular_datasource(ds: DataSource, session: Session) -> dict:
+    """Helper function to sync a single regular datasource (extracted from sync_regular_source)."""
+    # Handle regular files and URLs
+    documents: List[Document] = []
+    dir = 'data'
+    filepath = os.path.join(dir, f"workspaces/{ds.workspace_id}", ds.reference) 
+    try:
+        if ds.source_type == "file":
+            if ds.reference.lower().endswith(".txt") or ds.reference.lower().endswith(".md"):
+                loader = TextLoader(filepath, encoding="utf-8")
+                documents.extend(loader.load())
+            elif ds.reference.lower().endswith(".pdf"):
+                loader = PyPDFLoader(filepath)
+                documents.extend(loader.load())
+            else:
+                raise ValueError("Unsupported file type")
+        elif ds.source_type == "url":
+            loader = WebBaseLoader(ds.reference)
+            documents.extend(loader.load())
+        else:
+            raise ValueError("Unsupported source type")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Add to vector store using standardized embedding logic
+    added_docs = 0
+    if documents:
+        splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference], ds.workspace_id)
+        if splits:
+            get_vector_service().add_documents(splits)
+            added_docs = len(splits)
+
+    # Mark as synced
+    from datetime import datetime as _dt
+    ds.last_synced_at = _dt.utcnow()
+    ds.is_synced = 1
+    session.add(ds)
+    # Note: session.commit() is handled by the caller
+
+    return {"status": "synced", "added_docs": added_docs, "last_synced_at": ds.last_synced_at}
+
+
 @router.post("/regular/sync")
 def sync_all_sources(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
     """Sync all datasources that are not currently synced (excluding ClickUp tasks which are synced individually)."""
-    sources = session.exec(select(DataSource).where(DataSource.is_synced != 1)).all()
+    # Get all unsynced datasources for the current user's workspace (excluding ClickUp files)
+    unsynced_sources = session.exec(
+        select(DataSource).where(
+            DataSource.is_synced != 1,  # Not synced
+            DataSource.workspace_id == _.current_workspace_id,  # Current user's workspace
+            ~DataSource.reference.like(f"{CLICKUP_FILE_PREFIX}%")  # Exclude ClickUp files
+        )
+    ).all()
+    
+    if not unsynced_sources:
+        return {
+            "status": "no_sources_to_sync",
+            "message": "No regular datasources found to sync",
+            "synced_sources": 0,
+            "total_docs_added": 0
+        }
     
     synced_count = 0
-    total_docs = 0
-    errors = []
-
-    for ds in sources:
+    total_docs_added = 0
+    failed_sources = []
+    
+    for ds in unsynced_sources:
         try:
-            # Handle regular files and URLs (ClickUp tasks are handled via separate endpoints)
-            documents: List[Document] = []
-            dir = 'data'
-            try:
-                if ds.source_type == "file":
-                    if ds.reference.lower().endswith(".txt") or ds.reference.lower().endswith(".md"):
-                        loader = TextLoader(os.path.join(dir, ds.reference), encoding="utf-8")
-                        documents.extend(loader.load())
-                    elif ds.reference.lower().endswith(".pdf"):
-                        loader = PyPDFLoader(os.path.join(dir, ds.reference))
-                        documents.extend(loader.load())
-                elif ds.source_type == "url":
-                    loader = WebBaseLoader(ds.reference)
-                    documents.extend(loader.load())
-
-                if documents:
-                    splits = get_vector_service().process_documents_for_embedding(documents, [ds.reference])
-                    if splits:
-                        get_vector_service().add_documents(splits)
-                        total_docs += len(splits)
-
-                # Mark as synced
-                from datetime import datetime as _dt
-                ds.last_synced_at = _dt.utcnow()
-                ds.is_synced = 1
-                session.add(ds)
-                session.commit()
-                synced_count += 1
-
-            except Exception as e:
-                errors.append(f"Failed to sync {ds.reference}: {str(e)}")
-                continue
-
+            result = _sync_single_regular_datasource(ds, session)
+            session.commit()  # Commit each successful sync individually
+            synced_count += 1
+            total_docs_added += result["added_docs"]
+            logger.info(f"Successfully synced datasource {ds.reference}: {result['added_docs']} docs added")
         except Exception as e:
-            errors.append(f"Failed to sync datasource {ds.id}: {str(e)}")
+            session.rollback()  # Rollback any changes for failed sync
+            failed_sources.append({"reference": ds.reference, "error": str(e)})
+            logger.error(f"Failed to sync datasource {ds.reference}: {e}")
             continue
-
+    
     return {
         "status": "completed",
-        "synced_count": synced_count,
-        "total_docs": total_docs,
-        "errors": errors
+        "synced_sources": synced_count,
+        "total_docs_added": total_docs_added,
+        "failed_sources": failed_sources,
+        "message": f"Synced {synced_count} out of {len(unsynced_sources)} datasources"
     }
 
 @router.post("/regular/unsync")
@@ -1034,17 +1032,53 @@ def unsync_all_sources(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    """Unsync all datasources that are currently synced."""
-    sources = session.exec(select(DataSource).where(DataSource.is_synced == 1)).all()
-
-    for ds in sources:
-        ds.is_synced = 0
-        session.commit()
-
-    # Rebuild vector store to ensure removed docs are gone
+    """Unsync all datasources that are currently synced excluding ClickUp tasks. and for the current user"""
+    # Get all synced datasources for the current user's workspace (excluding ClickUp files)
+    synced_sources = session.exec(
+        select(DataSource).where(
+            DataSource.is_synced == 1,  # Currently synced
+            DataSource.workspace_id == _.current_workspace_id,  # Current user's workspace
+            ~DataSource.reference.like(f"{CLICKUP_FILE_PREFIX}%")  # Exclude ClickUp files
+        )
+    ).all()
+    
+    if not synced_sources:
+        return {
+            "status": "no_sources_to_unsync",
+            "message": "No regular datasources found to unsync",
+            "unsynced_sources": 0
+        }
+    
+    unsynced_count = 0
+    failed_sources = []
+    
+    for ds in synced_sources:
+        try:
+            # Remove documents from vector store first
+            vector_service = get_vector_service()
+            vector_service.delete_documents_by_source(ds.reference)
+            logger.info(f"Removed documents for {ds.reference} from vector store")
+            
+            ds.is_synced = 0
+            session.add(ds)
+            session.commit()  # Commit each successful unsync individually
+            unsynced_count += 1
+        except Exception as e:
+            session.rollback()  # Rollback any changes for failed unsync
+            failed_sources.append({"reference": ds.reference, "error": str(e)})
+            logger.error(f"Failed to unsync datasource {ds.reference}: {e}")
+            continue
+    
+    # Rebuild the vector store from remaining synced sources
     rebuild_vector_store(session)
+    
+    return {
+        "status": "completed",
+        "unsynced_sources": unsynced_count,
+        "failed_sources": failed_sources,
+        "message": f"Unsynced {unsynced_count} out of {len(synced_sources)} datasources"
+    }
 
-    return {"status": "unsynced"}
 
 # Helper to rebuild FAISS index from all synced sources (called after delete)
 def rebuild_vector_store(session: Session):
@@ -1115,6 +1149,7 @@ def save_file_content(
     filename: str,
     request: SaveFileRequest,
     _: str = Depends(get_current_user),
+    session: Session = Depends(get_session)
 ):
     """
     Save content to a file in the data folder, replacing existing content if file exists.
@@ -1142,7 +1177,13 @@ def save_file_content(
             f.write(request.content)
         
         file_size = os.path.getsize(file_path)
-        
+        # change is_synced to 0
+        ds = session.exec(select(DataSource).where(DataSource.reference == filename)).first()
+        if ds:
+            ds.is_synced = 0
+            session.commit()
+
+
         return SaveFileResponse(
             filename=filename,
             message="File saved successfully",

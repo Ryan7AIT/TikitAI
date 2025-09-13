@@ -1,5 +1,8 @@
 from langchain_community.chat_models import ChatOllama
+# from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
+
 import faiss
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
@@ -59,7 +62,30 @@ else:
 # embeddings = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-0.6B") #BAD RESULT IN FRENCH
 # embeddings = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-4B")
 # embeddings = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-large-instruct")
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2") #best model so far
+# embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2") #best model so far
+# embeddings = HuggingFaceEmbeddings(model_name="google/embeddinggemma-300m") 
+
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+
+# Wrap HuggingFace embeddings with Gemma-specific prompts
+# class GemmaEmbeddingsWithPrompts(HuggingFaceEmbeddings):
+#     def embed_query(self, text: str):
+#         # Gemma expects a "query" prompt
+#         prompt = f"task: search result | query: {text}"
+#         return super().embed_query(prompt)
+
+#     def embed_documents(self, texts: list[str]):
+#         # Gemma expects a "document" prompt
+#         prompts = [f"title: none | text: {doc}" for doc in texts]
+#         return super().embed_documents(prompts)
+
+# embeddings = GemmaEmbeddingsWithPrompts(model_name="google/embeddinggemma-300m")
+
+embeddings = HuggingFaceEmbeddings(
+    model_name="google/embeddinggemma-300m",
+    query_encode_kwargs={"prompt_name": "query"},
+    encode_kwargs={"prompt_name": "document"}
+)
 
 # embedding_dim = len(embeddings.embed_query("hello world"))
 # index = faiss.IndexFlatL2(embedding_dim)
@@ -148,6 +174,26 @@ else:
     print("Collection already exists. Using existing collection without re-embedding documents.")
 end_time = time.time()
 print(f"Embedding completed in {end_time - start_time:.2f} seconds.")
+
+
+
+
+
+start_time = time.time()
+retrieved_docs = vector_store.similarity_search_with_score(
+    "hey how are you!",
+    k=3
+)
+end_time = time.time()
+print(f"Retrieved {len(retrieved_docs)} documents in {end_time - start_time:.2f} seconds:")
+for doc, score in retrieved_docs:
+    print(f"Document: ----------------------------")
+    print(doc.page_content)
+    print("score: ")
+    print(score)
+    print(f"Document: ----------------------------")
+
+
 template = """Use the following pieces of context to answer the question at the end.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
 Use three sentences maximum and keep the answer as concise as possible.
@@ -240,19 +286,20 @@ def generate(state: MessagesState):
 
 
 
-graph_builder = StateGraph(MessagesState)
-graph_builder.add_node(query_or_respond)
-graph_builder.add_node(tools)
-graph_builder.add_node(generate)
-graph_builder.set_entry_point("query_or_respond")
-graph_builder.add_conditional_edges(
-    "query_or_respond",
-    tools_condition,
-    {END: END, "tools": "tools"},
-)
 
-graph_builder.add_edge("tools", "generate")
-graph_builder.add_edge("generate", END)
+# graph_builder = StateGraph(MessagesState)
+# graph_builder.add_node(query_or_respond)
+# graph_builder.add_node(tools)
+# graph_builder.add_node(generate)
+# graph_builder.set_entry_point("query_or_respond")
+# graph_builder.add_conditional_edges(
+#     "query_or_respond",
+#     tools_condition,
+#     {END: END, "tools": "tools"},
+# )
+
+# graph_builder.add_edge("tools", "generate")
+# graph_builder.add_edge("generate", END)
 
 
 
@@ -272,16 +319,19 @@ graph_builder.add_edge("generate", END)
 # input_message = "Hello"
 
 
-memory = MemorySaver()
-graph = graph_builder.compile(checkpointer=memory)
+# memory = MemorySaver()
+# graph = graph_builder.compile(checkpointer=memory)
 
-# Specify an ID for the thread
-config = {"configurable": {"thread_id": "a1b2c3"}}
+# # Specify an ID for the thread
+# config = {"configurable": {"thread_id": "a1b2c3"}}
 
-# 
-for step in graph.stream(
-    {"messages": [HumanMessage(content="explain it to me")]},
-    stream_mode="values",
-    config=config,
-):
-    step["messages"][-1].pretty_print()
+# # 
+# for step in graph.stream(
+#     {"messages": [HumanMessage(content="explain it to me")]},
+#     stream_mode="values",
+#     config=config,
+# ):
+#     step["messages"][-1].pretty_print()
+
+
+

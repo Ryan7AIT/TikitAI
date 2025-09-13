@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Model Configuration
     local_model: str = "llama3.2:latest"
     api_model: str = "gemma-3n-e4b-it" 
-    # api_model: str = "gemini-2.5-flash-lite"
+    api_model: str = "gemini-2.5-flash-lite"
     is_local: bool = False
     discord_bot_token: str
 
