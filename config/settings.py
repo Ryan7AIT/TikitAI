@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Model Configuration
     local_model: str = "llama3.2:latest"
     api_model: str = "gemma-3n-e4b-it" 
-    api_model: str = "gemini-2.5-flash-lite"
+    # api_model: str = "gemini-2.5-pro"  
     is_local: bool = False
     discord_bot_token: str
 
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # Security Configuration
     # TODO: chnage this in productin using env
     secret_key: str = "CHANGE_ME"  
-    access_token_expire_minutes: int = 15  # 15 minutes (short-lived)
+    access_token_expire_minutes: int = 60  # 60 minutes (short-lived)
     refresh_token_expire_days: int = 30  # 30 days (long-lived)
     
     class Config:

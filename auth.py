@@ -223,11 +223,6 @@ def get_current_user(
         )
 
     user = session.get(User, user_id)
-    # if user is None or not user.is_active:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="User not found or inactive"
-    #     )
     return user
 
 

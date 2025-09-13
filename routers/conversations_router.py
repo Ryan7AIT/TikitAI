@@ -1,6 +1,7 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 from datetime import datetime
 
+from auth import get_current_user
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select, delete
@@ -32,9 +33,10 @@ class ConversationUpdate(BaseModel):
 def create_conversation(
     payload: ConversationCreate,
     session: Session = Depends(get_session),
+    user: str = Depends(get_current_user),
 ):
     title = payload.title or f"Conversation {int(datetime.utcnow().timestamp())}"
-    conv = Conversation(title=title)
+    conv = Conversation(title=title, user_id=user.id)
     session.add(conv)
     session.commit()
     session.refresh(conv)
@@ -65,12 +67,20 @@ def delete_conversation(conv_id: int, session: Session = Depends(get_session)):
     session.commit()
     return {"status": "deleted"}
 
+class APIResponse(BaseModel):
+    data: Optional[Any]
+    success: bool
+    message: str
 
-@router.get("/", response_model=List[ConversationOut])
+@router.get("/", response_model=APIResponse)
 def list_conversations(
     session: Session = Depends(get_session),
+    _: str = Depends(get_current_user),
 ):
-    return session.exec(select(Conversation).order_by(Conversation.created_at.desc())).all()
+    user_conversations = session.exec(select(Conversation).where(Conversation.user_id == _.id)).all()
+
+    return APIResponse(data=user_conversations, success=True, message="Conversations retrieved successfully.")
+
 
 
 class MessageOut(BaseModel):

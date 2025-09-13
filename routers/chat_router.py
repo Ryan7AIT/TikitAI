@@ -81,7 +81,7 @@ async def chat_endpoint(
         # Create new conversation
         first_prompt = payload.question.strip()
         title = (first_prompt[:10] + "…") if len(first_prompt) > 10 else first_prompt
-        conv = Conversation(title=title or time.strftime("%Y-%m-%d %H:%M"))
+        conv = Conversation(title=title or time.strftime("%Y-%m-%d %H:%M"), user_id=current_user.id)
         session.add(conv)
         session.commit()
         session.refresh(conv)

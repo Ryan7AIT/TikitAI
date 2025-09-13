@@ -96,6 +96,12 @@ def create_db_and_tables():
             conn.execute(text("ALTER TABLE workspace ADD COLUMN active_repository_id INTEGER"))
             conn.commit()
 
+        # add user_id to conversation
+        cols = conn.execute(text("PRAGMA table_info(conversation)")).fetchall()
+        if cols and not any(row[1] == "user_id" for row in cols):
+            conn.execute(text("ALTER TABLE conversation ADD COLUMN user_id INTEGER"))
+            conn.commit()
+
     # Initialize external data sources if they don't exist
     _initialize_external_data_sources()
 

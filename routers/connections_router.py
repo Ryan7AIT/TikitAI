@@ -50,7 +50,7 @@ class savedConnection(BaseModel):
 @router.get("/", response_model=List[savedConnection])
 def list_connections(type: Optional[str] = Query(None), session: Session = Depends(get_session), _: str = Depends(get_current_user)):
     if type == 'clickup':
-        conns = session.exec(select(UserIntegrations).where(UserIntegrations.integration_id == 1)).all()
+        conns = session.exec(select(UserIntegrations).where(UserIntegrations.integration_id == 1).where(UserIntegrations.user_id == _.id)).all()
         # TODO: make the id dynamic (using enums 1== clickup)
     else:
         conns = session.exec(select(UserIntegrations)).all()
@@ -167,15 +167,30 @@ def update_connection(conn_id: int, payload: ConnectionIn, session: Session = De
 def update_last_used(conn_id: int, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
     user_integration = session.get(UserIntegrations, conn_id)
     if not user_integration:
-        raise HTTPException(status_code=404, detail="User integration not found")
-    user_integration.updated_at = datetime.utcnow()
-    user_integration.is_connected = True
-    session.add(user_integration)
-    session.commit()
+        # Create a new user integration if it doesn't exist
+        user_integration = UserIntegrations(
+            user_id=_.id,
+            integration_id=1,  # Default to ClickUp (integration_id=1)
+            is_connected=True,
+            name=f"Auto-created integration for user {_.username}",
+            description="Auto-created user integration"
+        )
+        session.add(user_integration)
+        session.commit()
+        session.refresh(user_integration)
+        message = 'New user integration created and marked as used'
+    else:
+        # Update existing user integration
+        user_integration.updated_at = datetime.utcnow()
+        user_integration.is_connected = True
+        session.add(user_integration)
+        session.commit()
+        message = 'Last used timestamp updated'
+    
     return {
         'success': True,
-        'message': 'Last used timestamp updated',
-        'data': None
+        'message': message,
+        'data': user_integration.id
     }
 @router.delete("/{conn_id}")
 def delete_connection(conn_id: int, session: Session = Depends(get_session), _: str = Depends(get_current_user)):
