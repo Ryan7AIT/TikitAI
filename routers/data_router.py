@@ -1416,6 +1416,7 @@ async def _get_gitlab_token_with_refresh(session: Session, user_integration_id: 
         
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid token data format")
+    
 @router.get("/gitlab/projects")
 async def list_projects(depends=Depends(get_current_user), session: Session = Depends(get_session)):
 
@@ -1425,7 +1426,6 @@ async def list_projects(depends=Depends(get_current_user), session: Session = De
     if not user_integration_id:
         raise HTTPException(status_code=400, detail="No connected integrations found")
     
-
     gitlab_info = session.exec(select(UserIntegrationCredentials).where(
         UserIntegrationCredentials.user_integration_id == user_integration_id)).first()
 
@@ -1441,8 +1441,28 @@ async def list_projects(depends=Depends(get_current_user), session: Session = De
                 f"{GITLAB_API_URL}/projects?membership=true",
                 headers={"Authorization": f"Bearer {gitlab_token}"}
             )
+        
+    projects = resp.json()
+    filtered_projects = []
+    workspace_id = depends.current_workspace_id
+    workspace = session.get(Workspace, workspace_id)
+    active_project_id = workspace.active_repository_id if workspace else None
 
-    return JSONResponse(resp.json())
+    for project in projects:
+        filtered_projects.append({
+            "id": project.get("id"),
+            "name": project.get("name"),
+            "path_with_namespace": project.get("path_with_namespace"),
+            "default_branch": project.get("default_branch"),
+            "visibility": project.get("visibility"),
+            "http_url_to_repo": project.get("http_url_to_repo"),
+            "description": project.get("description"),
+            "web_url": project.get("web_url"),
+            "avatar_url": project.get("avatar_url"),
+            "isActive": project.get("id") == active_project_id
+        })
+
+    return JSONResponse(filtered_projects)
 
 class GitlabFileRequest(BaseModel):
     file_path: str
@@ -1472,9 +1492,8 @@ async def set_active_project(
     return APIResponse(success=True, data={"project_id": project_id}, message="Active project set")
 
 
-@router.post("/gitlab/projects/{project_id}/file", response_model=APIResponse)
+@router.post("/gitlab/projects/file", response_model=APIResponse)
 async def create_or_update_file(
-    project_id: int,
     body: GitlabFileRequest,
     depends=Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -1489,6 +1508,19 @@ async def create_or_update_file(
                 success=False,
                 data=[],
                 message="No connected GitLab integrations found"
+            )
+        
+        workspace_id = depends.current_workspace_id
+        if not workspace_id:
+            return APIResponse(success=False, data=None, message="No active workspace found")
+        workspace = session.get(Workspace, workspace_id)
+        project_id = workspace.active_repository_id
+
+        if not project_id:
+            return APIResponse(
+                success=False,
+                data=[],
+                message="No active GitLab project found in workspace"
             )
 
         # Get access token with automatic refresh if needed
