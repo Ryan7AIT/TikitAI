@@ -66,7 +66,7 @@ def list_connections(type: Optional[str] = Query(None), session: Session = Depen
         data["type"] = "clickup" if conn.integration_id == 1 else "other"
         result.append(data)
     return result
-
+    
 
 @router.post("/")
 def create_connection(payload: ConnectionIn, session: Session = Depends(get_session), _: str = Depends(get_current_user)):

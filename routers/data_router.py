@@ -6,6 +6,7 @@ from unittest import result
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import BaseModel
 from sqlmodel import Session, exists, select
+from config.settings import get_settings
 from db import get_session
 from models import DataSource, ExternalDataSource, ClickUpConnection, UserIntegrations, UserIntegrationCredentials, Workspace
 from auth import get_current_user
@@ -1313,6 +1314,108 @@ def reload_vector_store(
 import httpx
 from fastapi.responses import JSONResponse
 GITLAB_API_URL = "https://gitlab.com/api/v4"
+
+async def _refresh_gitlab_token(session: Session, user_integration_id: int) -> dict:
+    """
+    Refresh GitLab access token using refresh token and update database.
+    Returns the new token data or raises HTTPException on failure.
+    """
+    gitlab_info = session.exec(select(UserIntegrationCredentials).where(
+        UserIntegrationCredentials.user_integration_id == user_integration_id)).first()
+    
+    if not gitlab_info:
+        raise HTTPException(status_code=400, detail="No GitLab credentials found")
+    
+    try:
+        token_data = json.loads(gitlab_info.credentials)
+        refresh_token = token_data.get("refresh_token")
+        
+        if not refresh_token:
+            raise HTTPException(status_code=400, detail="No refresh token available")
+        
+        # GitLab OAuth2 application credentials (you'll need to set these)
+        # These should be stored in environment variables or config
+        settings = get_settings()
+        CLIENT_ID = settings.CLIENT_ID
+        CLIENT_SECRET = settings.CLIENT_SECRET
+
+        if not CLIENT_ID or not CLIENT_SECRET:
+            raise HTTPException(
+                status_code=500, 
+                detail="GitLab OAuth2 credentials not configured. Please set GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET environment variables."
+            )
+        
+        # Call GitLab refresh token endpoint with all required parameters
+        async with httpx.AsyncClient() as client:
+            refresh_response = await client.post(
+                "https://gitlab.com/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                }
+            )
+        
+        if refresh_response.status_code != 200:
+            logger.error(f"GitLab token refresh failed: {refresh_response.status_code} - {refresh_response.text}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Failed to refresh GitLab token: {refresh_response.status_code}"
+            )
+        
+        new_token_data = refresh_response.json()
+        
+        # Add created_at timestamp for expiry tracking
+        new_token_data["created_at"] = int(datetime.utcnow().timestamp())
+        
+        # Update database with new token data
+        gitlab_info.credentials = json.dumps(new_token_data)
+        session.add(gitlab_info)
+        session.commit()
+        
+        logger.info("GitLab token refreshed successfully")
+        return new_token_data
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid token data format")
+    except Exception as e:
+        logger.error(f"Token refresh error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Token refresh failed: {str(e)}")
+
+async def _get_gitlab_token_with_refresh(session: Session, user_integration_id: int) -> str:
+    """
+    Get GitLab access token, refreshing if necessary.
+    Returns the access token or raises HTTPException.
+    """
+    gitlab_info = session.exec(select(UserIntegrationCredentials).where(
+        UserIntegrationCredentials.user_integration_id == user_integration_id)).first()
+    
+    if not gitlab_info:
+        raise HTTPException(status_code=400, detail="No GitLab credentials found")
+    
+    try:
+        token_data = json.loads(gitlab_info.credentials)
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No access token found")
+        
+        # Check if token is expired (created_at + expires_in compared to current time)
+        created_at = token_data.get("created_at", 0)
+        expires_in = token_data.get("expires_in", 7200)
+        current_time = int(datetime.utcnow().timestamp())
+        
+        # If token expires within next 5 minutes, refresh it
+        if current_time >= (created_at + expires_in - 300):
+            logger.info("GitLab token is expired or expiring soon, refreshing...")
+            new_token_data = await _refresh_gitlab_token(session, user_integration_id)
+            access_token = new_token_data.get("access_token")
+        
+        return access_token
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid token data format")
 @router.get("/gitlab/projects")
 async def list_projects(depends=Depends(get_current_user), session: Session = Depends(get_session)):
 
@@ -1369,48 +1472,141 @@ async def set_active_project(
     return APIResponse(success=True, data={"project_id": project_id}, message="Active project set")
 
 
-@router.post("/gitlab/projects/{project_id}/file")
+@router.post("/gitlab/projects/{project_id}/file", response_model=APIResponse)
 async def create_or_update_file(
     project_id: int,
     body: GitlabFileRequest,
     depends=Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    user_integration_id = session.exec(select(UserIntegrations.id).where(
-        (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1) & (UserIntegrations.integration_id == 4)
-    )).first()
-    if not user_integration_id:
-        raise HTTPException(status_code=400, detail="No connected integrations found")
-    
+    try:
+        user_integration_id = session.exec(select(UserIntegrations.id).where(
+            (UserIntegrations.user_id == depends.id) & (UserIntegrations.is_connected == 1) & (UserIntegrations.integration_id == 4)
+        )).first()
+        
+        if not user_integration_id:
+            return APIResponse(
+                success=False,
+                data=[],
+                message="No connected GitLab integrations found"
+            )
 
-    gitlab_info = session.exec(select(UserIntegrationCredentials).where(
-        UserIntegrationCredentials.user_integration_id == user_integration_id)).first()
+        # Get access token with automatic refresh if needed
+        gitlab_token = await _get_gitlab_token_with_refresh(session, user_integration_id)
 
-    token_data = json.loads(gitlab_info.credentials)
-    gitlab_token = token_data.get("access_token")
-
-    # step 1 , check if file exists
-    url = f"{GITLAB_API_URL}/projects/{project_id}/repository/files/{quote_plus(body.file_path)}"
-    res = requests.get(url, headers={"Authorization": f"Bearer {gitlab_token}"}, params={"ref": body.branch})
-
-    if res.status_code == 200:
-        put_url = url
-        data = {
-            "branch": body.branch,
-            "content": body.content,
-            "commit_message": f"Update {body.file_path}"
-        }
-
-        resp = requests.put(put_url, headers={"Authorization": f"Bearer {gitlab_token}"}, json=data)
-    else:
+        # Step 1: Check if file exists
+        url = f"{GITLAB_API_URL}/projects/{project_id}/repository/files/{quote_plus(body.file_path)}"
+        
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{GITLAB_API_URL}/projects/{project_id}/repository/files/{quote_plus(body.file_path)}",
-                headers={"Authorization": f"Bearer {gitlab_token}"},
-                json={
+            # Check if file exists
+            check_response = await client.get(
+                url, 
+                headers={"Authorization": f"Bearer {gitlab_token}"}, 
+                params={"ref": body.branch}
+            )
+
+            if check_response.status_code == 200:
+                # File exists, update it
+                data = {
                     "branch": body.branch,
                     "content": body.content,
                     "commit_message": f"Update {body.file_path}"
                 }
-            )
-    return JSONResponse(resp.json())
+                resp = await client.put(url, headers={"Authorization": f"Bearer {gitlab_token}"}, json=data)
+            elif check_response.status_code == 404:
+                # File doesn't exist, create it
+                data = {
+                    "branch": body.branch,
+                    "content": body.content,
+                    "commit_message": f"Create {body.file_path}"
+                }
+                resp = await client.post(url, headers={"Authorization": f"Bearer {gitlab_token}"}, json=data)
+            else:
+                # Handle other errors from the file check
+                try:
+                    error_data = check_response.json()
+                    if error_data.get("error") == "invalid_token":
+                        # Try to refresh token and retry once
+                        logger.info("Token invalid, attempting refresh...")
+                        new_token_data = await _refresh_gitlab_token(session, user_integration_id)
+                        gitlab_token = new_token_data.get("access_token")
+                        
+                        # Retry the file check
+                        check_response = await client.get(
+                            url, 
+                            headers={"Authorization": f"Bearer {gitlab_token}"}, 
+                            params={"ref": body.branch}
+                        )
+                        
+                        if check_response.status_code == 200:
+                            # File exists, update it
+                            data = {
+                                "branch": body.branch,
+                                "content": body.content,
+                                "commit_message": f"Update {body.file_path}"
+                            }
+                            resp = await client.put(url, headers={"Authorization": f"Bearer {gitlab_token}"}, json=data)
+                        else:
+                            # File doesn't exist, create it
+                            data = {
+                                "branch": body.branch,
+                                "content": body.content,
+                                "commit_message": f"Create {body.file_path}"
+                            }
+                            resp = await client.post(url, headers={"Authorization": f"Bearer {gitlab_token}"}, json=data)
+                    else:
+                        return APIResponse(
+                            success=False,
+                            data=[],
+                            message=f"GitLab API error: {error_data.get('message', 'Unknown error')}"
+                        )
+                except:
+                    return APIResponse(
+                        success=False,
+                        data=[],
+                        message=f"GitLab API error: HTTP {check_response.status_code}"
+                    )
+
+        # Check the final response
+        if resp.status_code in [200, 201]:
+            try:
+                response_data = resp.json()
+                return APIResponse(
+                    success=True,
+                    data=response_data,
+                    message=f"File {body.file_path} {'updated' if check_response.status_code == 200 else 'created'} successfully"
+                )
+            except:
+                return APIResponse(
+                    success=True,
+                    data=[],
+                    message=f"File {body.file_path} {'updated' if check_response.status_code == 200 else 'created'} successfully"
+                )
+        else:
+            try:
+                error_data = resp.json()
+                return APIResponse(
+                    success=False,
+                    data=[],
+                    message=f"Failed to save file: {error_data.get('message', 'Unknown error')}"
+                )
+            except:
+                return APIResponse(
+                    success=False,
+                    data=[],
+                    message=f"Failed to save file: HTTP {resp.status_code}"
+                )
+
+    except HTTPException as e:
+        return APIResponse(
+            success=False,
+            data=[],
+            message=e.detail
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in create_or_update_file: {str(e)}")
+        return APIResponse(
+            success=False,
+            data=[],
+            message=f"Unexpected error: {str(e)}"
+        )
