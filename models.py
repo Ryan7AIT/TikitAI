@@ -139,6 +139,7 @@ class Workspace(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     is_active: bool = Field(default=True)
     active_repository_id: Optional[int] = Field(default=None)
+    active_repository_branch: Optional[str] = Field(default=None)
 
 
 class WorkspaceUser(SQLModel, table=True):

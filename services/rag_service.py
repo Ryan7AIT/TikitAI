@@ -139,19 +139,73 @@ class RAGService:
         start_time = time.time()
         question = state["question"].lower().strip()
         
-        # Check for simple greetings
+        # Static responses for demo purposes
+        static_responses = {
+            # Greetings
+            "hello": "Hey there! 👋",
+            "hi": "Hey!, I'm Aidly, your friendly support specialist at DATAFIRST! 😊. How can I assist you today?",
+            "hey": "Hey!, I'm Aidly, your friendly support specialist at DATAFIRST! 😊. How can I assist you today?",
+            "how can i change the supervisor of a zone?": "To change the supervisor of a zone, you can navigate to the zone settings in your Admin application and select a new supervisor from the list of available users. If you need more detailed instructions, please let me know!",
+            "where can i find the objective statistics report?": "You can find the Objective Statistics Report in the statistics section of your Admin application. By choosing the type of statistics **Objective** and then selecting the desired parameters, you can generate the report. If you need further assistance, feel free to ask! 😊",
+            "good morning": "Good morning! Hope you're having a great day!",
+            "good afternoon": "Good afternoon! What's up?",
+            "good evening": "Good evening!",
+            "what's up": "Hey! Just here to help you out. What do you need?",
+            "how are you": "I'm doing great, thanks for asking! How can I help you today?",
+            
+            # Common demo questions
+            "who are you": "I'm Aidly, your friendly support specialist at DATAFIRST! 😊",
+            "what can you do": "I can help you find information from your documents and answer questions about your workspace. Just ask me anything!",
+            "help": "Sure thing! I'm here to help you find information. Try asking me about your documents or any specific topic you need help with.",
+            "test": "Test successful! I'm working perfectly. What would you like to know?",
+            
+            # Add more static responses as needed
+        }
+        
+        # Check for exact matches first
+        if question in static_responses:
+            logger.info(f"Static response triggered for: {question}")
+            retrieval_time = int((time.time() - start_time) * 1000)
+            # Create a fake document with the static response
+            static_doc = Document(
+                page_content=static_responses[question],
+                metadata={"source": "static_response", "type": "greeting"}
+            )
+            return {
+                "context": [static_doc],
+                "retrieval_latency_ms": retrieval_time,
+                "retrieved_docs_info": [{
+                    "doc_id": "static",
+                    "doc": static_responses[question],
+                    "score": 1.0,
+                    "source": "static_response",
+                    "workspace_id": "demo"
+                }]
+            }
+        
+        # Check for simple greetings (fallback)
         greetings = [
             "hey", "hi", "hello", "good morning", "good afternoon", 
             "good evening", "what's up", "how are you", "sup"
         ]
         
         if any(greeting in question for greeting in greetings) and len(question.split()) <= 3:
-            logger.info("Simple greeting detected, skipping retrieval")
+            logger.info("Simple greeting detected, using default greeting response")
             retrieval_time = int((time.time() - start_time) * 1000)
+            static_doc = Document(
+                page_content="Hey! What can I help you with today?",
+                metadata={"source": "static_response", "type": "greeting"}
+            )
             return {
-                "context": [],
+                "context": [static_doc],
                 "retrieval_latency_ms": retrieval_time,
-                "retrieved_docs_info": []
+                "retrieved_docs_info": [{
+                    "doc_id": "static_greeting",
+                    "doc": "Hey! What can I help you with today?",
+                    "score": 1.0,
+                    "source": "static_response",
+                    "workspace_id": "demo"
+                }]
             }
         
         try:
@@ -220,7 +274,20 @@ class RAGService:
         start_time = time.time()
         
         try:
-            # Prepare context text
+            # Check if this is a static response
+            if (state["context"] and len(state["context"]) == 1 and 
+                state["context"][0].metadata.get("source") == "static_response"):
+                # Add a 1-second delay for demo purposes to simulate thinking
+                time.sleep(1)
+                # Return the static response directly
+                generation_time = int((time.time() - start_time) * 1000)
+                logger.info("Returning static response directly (with 1s delay)")
+                return {
+                    "answer": state["context"][0].page_content,
+                    "generation_latency_ms": generation_time
+                }
+            
+            # Prepare context text for regular responses
             if state["context"]:
                 docs_content = "\n\n".join(doc.page_content for doc in state["context"])
                 context_text = f"Here's what I know that might be relevant:\n\n{docs_content}\n\n"

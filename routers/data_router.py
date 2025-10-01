@@ -1432,35 +1432,89 @@ async def list_projects(depends=Depends(get_current_user), session: Session = De
     token_data = json.loads(gitlab_info.credentials)
     gitlab_token = token_data.get("access_token")
 
-
     if not gitlab_token:
         raise HTTPException(status_code=400, detail="GitLab token not configured")
 
     async with httpx.AsyncClient() as client:
+        # Get projects
         resp = await client.get(
-                f"{GITLAB_API_URL}/projects?membership=true",
-                headers={"Authorization": f"Bearer {gitlab_token}"}
-            )
+            f"{GITLAB_API_URL}/projects?membership=true",
+            headers={"Authorization": f"Bearer {gitlab_token}"}
+        )
         
-    projects = resp.json()
-    filtered_projects = []
-    workspace_id = depends.current_workspace_id
-    workspace = session.get(Workspace, workspace_id)
-    active_project_id = workspace.active_repository_id if workspace else None
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to fetch GitLab projects")
+        
+        projects = resp.json()
+        
+        filtered_projects = []
+        workspace_id = depends.current_workspace_id
+        workspace = session.get(Workspace, workspace_id)
+        active_project_id = workspace.active_repository_id if workspace else None
 
-    for project in projects:
-        filtered_projects.append({
-            "id": project.get("id"),
-            "name": project.get("name"),
-            "path_with_namespace": project.get("path_with_namespace"),
-            "default_branch": project.get("default_branch"),
-            "visibility": project.get("visibility"),
-            "http_url_to_repo": project.get("http_url_to_repo"),
-            "description": project.get("description"),
-            "web_url": project.get("web_url"),
-            "avatar_url": project.get("avatar_url"),
-            "isActive": project.get("id") == active_project_id
-        })
+        # Fetch branches for each project
+        for project in projects:
+            project_id = project.get("id")
+            
+            # Get branches for this project
+            branches = []
+            try:
+                branches_resp = await client.get(
+                    f"{GITLAB_API_URL}/projects/{project_id}/repository/branches",
+                    headers={"Authorization": f"Bearer {gitlab_token}"}
+                )
+                
+                if branches_resp.status_code == 200:
+                    branches_data = branches_resp.json()
+                    branches = [{
+                        "name": branch.get("name"),
+                        "default": branch.get("default", False),
+                        "protected": branch.get("protected", False),
+                        "merged": branch.get("merged", False),
+                        "commit": {
+                            "id": branch.get("commit", {}).get("id"),
+                            "short_id": branch.get("commit", {}).get("short_id"),
+                            "title": branch.get("commit", {}).get("title"),
+                            "created_at": branch.get("commit", {}).get("created_at")
+                        } if branch.get("commit") else None
+                    } for branch in branches_data]
+                else:
+                    # If we can't fetch branches, at least include the default branch
+                    default_branch = project.get("default_branch")
+                    if default_branch:
+                        branches = [{
+                            "name": default_branch,
+                            "default": True,
+                            "protected": False,
+                            "merged": False,
+                            "commit": None
+                        }]
+            except Exception as e:
+                # Fallback to default branch if branch fetching fails
+                default_branch = project.get("default_branch")
+                if default_branch:
+                    branches = [{
+                        "name": default_branch,
+                        "default": True,
+                        "protected": False,
+                        "merged": False,
+                        "commit": None
+                    }]
+
+            filtered_projects.append({
+                "id": project.get("id"),
+                "name": project.get("name"),
+                "path_with_namespace": project.get("path_with_namespace"),
+                "default_branch": project.get("default_branch"),
+                "visibility": project.get("visibility"),
+                "http_url_to_repo": project.get("http_url_to_repo"),
+                "description": project.get("description"),
+                "web_url": project.get("web_url"),
+                "avatar_url": project.get("avatar_url"),
+                "isActive": project.get("id") == active_project_id,
+                "branches": branches,
+                "branches_count": len(branches)
+            })
 
     return JSONResponse(filtered_projects)
 
@@ -1642,3 +1696,27 @@ async def create_or_update_file(
             data=[],
             message=f"Unexpected error: {str(e)}"
         )
+
+
+class branchRequest(BaseModel):
+    branch: str 
+
+@router.post("/{integration_id}/gitlab/projects/{project_id}/set-active-branch", response_model=APIResponse)
+async def set_active_branch(
+    integration_id: int,
+    project_id: int,
+    body: branchRequest,
+    depends=Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    workspace_id = depends.current_workspace_id
+    if not workspace_id:
+        return APIResponse(success=False, data=None, message="No active workspace found")
+
+    # update user workspace with active project id
+    workspace = session.get(Workspace, workspace_id)
+    workspace.active_repository_branch = body.branch
+    session.add(workspace)
+    session.commit()
+
+    return APIResponse(success=True, data={"branch": body.branch, "project_id": project_id,"isActive": True}, message="Active branch set")

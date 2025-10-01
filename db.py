@@ -96,6 +96,12 @@ def create_db_and_tables():
             conn.execute(text("ALTER TABLE workspace ADD COLUMN active_repository_id INTEGER"))
             conn.commit()
 
+        # add active_repository_branch to workspace
+        cols = conn.execute(text("PRAGMA table_info(workspace)")).fetchall()
+        if cols and not any(row[1] == "active_repository_branch" for row in cols):
+            conn.execute(text("ALTER TABLE workspace ADD COLUMN active_repository_branch TEXT"))
+            conn.commit()
+
         # add user_id to conversation
         cols = conn.execute(text("PRAGMA table_info(conversation)")).fetchall()
         if cols and not any(row[1] == "user_id" for row in cols):
