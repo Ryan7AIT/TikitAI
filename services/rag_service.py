@@ -15,9 +15,13 @@ from qdrant_client.http import models
 from qdrant_client.models import Distance, VectorParams
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+from sqlmodel import Session, select
 
 from config.settings import get_settings
 from services.vector_service import get_vector_service
+from db import get_session
+from models import UserPreference
+from translator import translate_text
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +29,17 @@ logger = logging.getLogger(__name__)
 class State(TypedDict):
     """State structure for the RAG pipeline."""
     question: str
+    original_question: str  # Original question before translation
+    translated_question: Optional[str]  # Question after translation (used for search)
     context: List[Document]
     answer: str
     retrieval_latency_ms: Optional[int]
     generation_latency_ms: Optional[int]
     retrieved_docs_info: List[dict]
     workspace_id: Optional[int]
+    language: str  # User's preferred language for response
+    source_language: str  # Detected/configured source language of the question
+    was_translated: bool  # Whether translation occurred
 
 
 class RAGService:
@@ -79,11 +88,10 @@ class RAGService:
                 model=self.settings.api_model,
                 model_provider="google_genai",
                 api_key=self.settings.google_api_key,
-                temperature=0.2,
+                temperature=0.4,
             )
             logger.info(f"Using API model: {self.settings.api_model}")
     
-    lng = "English"
     def _initialize_prompt_template(self):
         """Initialize the prompt template."""
 
@@ -135,8 +143,15 @@ class RAGService:
         logger.info("RAG graph initialized")
     
     def _retrieve(self, state: State) -> dict:
-        """Retrieve relevant documents for the question."""
+        """
+        Retrieve relevant documents for the question.
+        
+        This method handles translation of non-English queries to English before
+        performing semantic search, ensuring all searches are conducted in English
+        for consistency and better retrieval accuracy.
+        """
         start_time = time.time()
+        original_question = state["question"]
         question = state["question"].lower().strip()
         
         # Static responses for demo purposes
@@ -209,14 +224,33 @@ class RAGService:
             }
         
         try:
+            # Translate question to English if needed
+            # We always search in English for consistency
+            search_question = state["question"]
+            source_lang = state.get("source_language", "en")
+            
+            # Only translate if source language is not English
+            if source_lang != "en" and source_lang.lower() != "english":
+                try:
+                    logger.info(f"Translating question from {source_lang} to English: {state['question'][:50]}...")
+                    search_question = translate_text(
+                        state["question"], 
+                        source=source_lang, 
+                        target="en"
+                    )
+                    logger.info(f"Translated question: {search_question[:50]}...")
+                except Exception as e:
+                    logger.error(f"Translation failed, using original question: {e}")
+                    search_question = state["question"]
 
             # Get documents with scores, filtering by workspace_id
             metadata_filter = None
             if state.get("workspace_id"):
                 metadata_filter = {"metadata.workspace_id": state["workspace_id"]}
             
+            # Use the translated (English) question for search
             retrieved_docs_with_scores = self.vector_service.similarity_search_with_score(
-                state["question"], 
+                search_question, 
                 k=self.settings.similarity_search_k,
                 metadata_filter=metadata_filter
             )
@@ -250,14 +284,16 @@ class RAGService:
                 return {
                     "context": context_docs,
                     "retrieval_latency_ms": retrieval_time,
-                    "retrieved_docs_info": docs_info
+                    "retrieved_docs_info": docs_info,
+                    "translated_question": search_question  # Return the translated question
                 }
             else:
                 logger.warning("No documents retrieved")
                 return {
                     "context": [],
                     "retrieval_latency_ms": retrieval_time,
-                    "retrieved_docs_info": []
+                    "retrieved_docs_info": [],
+                    "translated_question": search_question  # Return the translated question
                 }
                 
         except Exception as e:
@@ -266,7 +302,8 @@ class RAGService:
             return {
                 "context": [],
                 "retrieval_latency_ms": retrieval_time,
-                "retrieved_docs_info": []
+                "retrieved_docs_info": [],
+                "translated_question": state["question"]  # Return original if error
             }
     
     def _generate(self, state: State) -> dict:
@@ -300,7 +337,7 @@ class RAGService:
             messages = self.prompt_template.invoke({
                 "question": state["question"], 
                 "context": context_text,
-                "lng": "English"
+                "lng": state["language"]
             })
             response = self.llm.invoke(messages)
             
@@ -319,13 +356,20 @@ class RAGService:
                 "generation_latency_ms": generation_time
             }
     
-    def ask_question(self, question: str, workspace_id: Optional[int] = None) -> Tuple[str, dict]:
+    def ask_question(self, question: str, workspace_id: Optional[int] = None, user_id: Optional[int] = None) -> Tuple[str, dict]:
         """
         Process a question through the RAG pipeline and return the answer with metrics.
         
+        This method handles:
+        1. Fetching user's language preference from the database
+        2. Translating non-English questions to English for retrieval
+        3. Generating responses in the user's preferred language
+        4. Tracking translation metrics for logging
+        
         Args:
-            question: The user's question
+            question: The user's question (in any supported language)
             workspace_id: The workspace ID to filter documents by (optional)
+            user_id: The user ID to fetch language preference (optional)
             
         Returns:
             Tuple of (answer, metrics_dict) where metrics contains:
@@ -333,30 +377,85 @@ class RAGService:
             - generation_latency_ms
             - retrieved_docs_info
             - model_name
+            - source_language: detected/configured language of input
+            - response_language: language of response
+            - was_translated: whether translation occurred
+            - original_question: question before translation
+            - translated_question: question after translation (for search)
         """
+        print("-------------------------------------------------------------------------")
+        print("-------------------------------------------------------------------------")
+
+        print("ask_question called")
+        print(f"Question: {question[:50]}...")
+        print("-------------------------------------------------------------------------")
+        print("-------------------------------------------------------------------------")
+
         if not question or not question.strip():
             return "I didn't receive a question. Could you please ask something?", {}
         
+        # Get user's language preference for both source and response
+        response_language = "English"  # Language for response (default)
+        source_language = "en"  # Language code for source question (default)
+        
+        if user_id:
+            try:
+                session = next(get_session())
+                try:
+                    stmt = select(UserPreference).where(
+                        UserPreference.user_id == user_id,
+                        UserPreference.preference == "language"
+                    )
+                    pref = session.exec(stmt).first()
+                    if pref:
+                        # Map language codes to full names for response
+                        language_map = {
+                            "en": "English",
+                            "fr": "French",
+                            "ar": "Arabic",
+                        }
+                        # Store both the code (for translation) and full name (for response)
+                        source_language = pref.value.lower()
+                        response_language = language_map.get(source_language, pref.value)
+                        logger.info(f"Using language preference for user {user_id}: {response_language} (code: {source_language})")
+                    else:
+                        logger.info(f"No language preference found for user {user_id}, using default: {response_language}")
+                finally:
+                    session.close()
+            except Exception as e:
+                logger.error(f"Error fetching language preference for user {user_id}: {e}")
+        
         try:
-            logger.info(f"Processing question: {question[:100]}...")
+            logger.info(f"Processing question: {question[:100]}... (response language: {response_language}, source language: {source_language})")
             if workspace_id:
                 logger.info(f"Filtering by workspace_id: {workspace_id}")
             
+            # Invoke RAG graph with all necessary parameters
             result = self.rag_graph.invoke({
-                "question": question, 
-                "workspace_id": workspace_id
+                "question": question,
+                "original_question": question,  # Store original for logging
+                "workspace_id": workspace_id,
+                "language": response_language,  # Language for response generation
+                "source_language": source_language,  # Language of input question
+                "was_translated": source_language != "en"  # Track if translation will occur
             })
 
             answer = result.get("answer", "I wasn't able to generate an answer.")
             
-            # Collect metrics
+            # Collect metrics including translation information
             metrics = {
                 "retrieval_latency_ms": result.get("retrieval_latency_ms"),
                 "generation_latency_ms": result.get("generation_latency_ms"),
                 "retrieved_docs_info": result.get("retrieved_docs_info", []),
                 "model_name": self.settings.local_model if self.settings.is_local else self.settings.api_model,
                 "temperature": None,  # Could be added to LLM config
-                "num_retrieved": len(result.get("retrieved_docs_info", []))
+                "num_retrieved": len(result.get("retrieved_docs_info", [])),
+                # Translation metrics
+                "source_language": source_language,
+                "response_language": response_language,
+                "was_translated": source_language != "en",
+                "original_question": question,
+                "translated_question": result.get("translated_question") if source_language != "en" else None
             }
             
             logger.info("Question processed successfully")
@@ -385,6 +484,6 @@ def initialize_rag_system():
     vector_service.load_documents_from_data_folder()
     
     # Initialize RAG service (lazy initialization will handle the rest)
-    rag_service = get_rag_service()
+    get_rag_service()
     
     logger.info("RAG system initialization completed") 

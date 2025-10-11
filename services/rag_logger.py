@@ -27,7 +27,7 @@ class RetrievedDocument:
 
 @dataclass
 class RAGLogEntry:
-    """Complete RAG interaction log entry."""
+    """Complete RAG interaction log entry with translation tracking."""
     timestamp: str
     session_id: str
     user_id: Optional[str]
@@ -47,6 +47,12 @@ class RAGLogEntry:
     conversation_id: Optional[int]
     message_id: Optional[int]
     error: Optional[str]
+    # Translation tracking fields
+    source_language: Optional[str] = None  # Language of the input question
+    response_language: Optional[str] = None  # Language of the response
+    was_translated: Optional[bool] = None  # Whether translation occurred
+    original_question: Optional[str] = None  # Question before translation
+    translated_question: Optional[str] = None  # Question after translation (used for search)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert the log entry to a dictionary."""
@@ -131,10 +137,15 @@ class RAGLogger:
         model_name: Optional[str] = None,
         temperature: Optional[float] = None,
         error: Optional[str] = None,
-        additional_context: Optional[str] = None
+        additional_context: Optional[str] = None,
+        source_language: Optional[str] = None,
+        response_language: Optional[str] = None,
+        was_translated: Optional[bool] = None,
+        original_question: Optional[str] = None,
+        translated_question: Optional[str] = None
     ):
         """
-        Log a complete RAG interaction.
+        Log a complete RAG interaction with translation tracking.
         
         Args:
             user_query: The user's input query
@@ -150,6 +161,11 @@ class RAGLogger:
             temperature: Model temperature setting
             error: Error message if any
             additional_context: Any additional context used in prompt
+            source_language: Language of the input question (e.g., 'fr', 'en')
+            response_language: Language for the response (e.g., 'French', 'English')
+            was_translated: Whether the question was translated to English for retrieval
+            original_question: Original question before translation
+            translated_question: Question after translation (used for search)
         """
         try:
             # Process retrieved documents
@@ -172,7 +188,7 @@ class RAGLogger:
             completion_tokens = self._estimate_tokens(response)
             total_tokens = prompt_tokens + completion_tokens
             
-            # Create log entry
+            # Create log entry with translation information
             log_entry = RAGLogEntry(
                 timestamp=self._get_timestamp(),
                 session_id=self._session_id,
@@ -192,7 +208,13 @@ class RAGLogger:
                 num_retrieved=len(retrieved_docs_data),
                 conversation_id=conversation_id,
                 message_id=message_id,
-                error=error
+                error=error,
+                # Translation tracking
+                source_language=source_language,
+                response_language=response_language,
+                was_translated=was_translated,
+                original_question=original_question,
+                translated_question=translated_question
             )
             
             # Write to log file

@@ -163,6 +163,7 @@ def _initialize_external_data_sources():
         session.commit()
 
 
+
 def get_session():
     """FastAPI dependency that yields a database session."""
     with Session(engine) as session:

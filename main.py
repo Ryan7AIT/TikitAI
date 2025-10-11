@@ -38,7 +38,7 @@ GOOGLE_API_KEY="AIzaSyDSW8g-DrBwRYEpuBAgjJHCKOYW0rYK0BQ"
 is_local = False
 
 # from translator import translate_text
-
+# translated = translate_text(question)
 
 # print("start translation======================================")
 

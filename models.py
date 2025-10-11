@@ -13,6 +13,16 @@ class User(SQLModel, table=True):
     current_workspace_id: Optional[str] = Field(default=None, foreign_key="workspace.id")
 
 
+class UserPreference(SQLModel, table=True):
+    """Stores user preferences like language settings."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    preference: str = Field(index=True)  # e.g., "language"
+    value: str  # e.g., "fr"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class RefreshToken(SQLModel, table=True):
     """Stores refresh tokens for JWT authentication"""
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -148,4 +158,43 @@ class WorkspaceUser(SQLModel, table=True):
     workspace_id: int = Field(foreign_key="workspace.id")
     user_id: int = Field(foreign_key="user.id")
     joined_at: datetime = Field(default_factory=datetime.utcnow)
-    role: Optional[str] = Field(default="member")  # "admin", "member", etc. 
+    role: Optional[str] = Field(default="member")  # "admin", "member", etc.
+
+
+# ----------------------------- Feedback System ----------------------------- #
+
+class Feedback(SQLModel, table=True):
+    """Stores feature requests and bug reports from users"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    type: str = Field(index=True)  # "feature" or "bug"
+    title: str = Field(max_length=255)
+    description: str = Field(sa_column=Column(TEXT))
+    category: Optional[str] = Field(default=None, max_length=100)
+    priority: str = Field(default="medium")  # "low", "medium", "high"
+    status: str = Field(default="pending", index=True)  # "pending", "in-progress", "completed", "rejected"
+    votes: int = Field(default=0, index=True)
+    author_id: int = Field(foreign_key="user.id")
+    workspace_id: Optional[int] = Field(default=None, foreign_key="workspace.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    deleted_at: Optional[datetime] = Field(default=None)
+
+
+class FeedbackVote(SQLModel, table=True):
+    """Tracks which users have voted on which feedback items"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    feedback_id: int = Field(foreign_key="feedback.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FeedbackComment(SQLModel, table=True):
+    """Comments on feedback items"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    feedback_id: int = Field(foreign_key="feedback.id", index=True)
+    author_id: int = Field(foreign_key="user.id")
+    content: str = Field(sa_column=Column(TEXT))
+    votes: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: Optional[datetime] = Field(default=None) 

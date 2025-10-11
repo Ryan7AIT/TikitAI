@@ -65,7 +65,8 @@ async def chat_endpoint(
         rag_service = get_rag_service()
         answer, rag_metrics = rag_service.ask_question(
             payload.question, 
-            workspace_id=current_user.current_workspace_id
+            workspace_id=current_user.current_workspace_id,
+            user_id=current_user.id
         )
     except Exception as e:
         error_message = str(e)
@@ -130,18 +131,16 @@ async def chat_endpoint(
             message_id=msg.id,
             model_name=rag_metrics.get("model_name"),
             temperature=rag_metrics.get("temperature"),
-            error=error_message
+            error=error_message,
+            # Translation information
+            source_language=rag_metrics.get("source_language"),
+            response_language=rag_metrics.get("response_language"),
+            was_translated=rag_metrics.get("was_translated"),
+            original_question=rag_metrics.get("original_question"),
+            translated_question=rag_metrics.get("translated_question")
         )
     except Exception as log_error:
         logger.error(f"Failed to log RAG interaction: {log_error}")
-    
-    # Log interaction (legacy format)
-    client_ip = request.client.host if request.client else "unknown"
-    safe_q = payload.question.replace("\t", " ").replace("\n", " ")
-    safe_a = answer.replace("\t", " ").replace("\n", " ")
-    # interaction_logger.info(
-    #     f"{msg.id}\tconv:{conv_id}\t{client_ip}\t{latency_ms}ms\tQ: {safe_q}\tA: {safe_a}"
-    # )
     
     logger.info(f"Chat request processed successfully in {latency_ms}ms")
     
