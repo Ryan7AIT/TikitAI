@@ -77,7 +77,8 @@ def list_conversations(
     session: Session = Depends(get_session),
     _: str = Depends(get_current_user),
 ):
-    user_conversations = session.exec(select(Conversation).where(Conversation.user_id == _.id)).all()
+    # add order by id descending to get latest conversations first
+    user_conversations = session.exec(select(Conversation).where(Conversation.user_id == _.id).order_by(Conversation.id.desc())).all()
 
     return APIResponse(data=user_conversations, success=True, message="Conversations retrieved successfully.")
 
