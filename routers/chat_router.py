@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from db import get_session
-from models import Message, Conversation, User
+from models import Message, Conversation, User, Ticket
 from services.rag_service import get_rag_service
 from services.rag_logger import get_rag_logger, RetrievedDocument
 from config.settings import get_settings
@@ -24,6 +24,39 @@ class Question(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000)
     conversation_id: int | None = None
     model_name: str | None = None
+    is_system_message: bool = False
+
+
+class TicketData(BaseModel):
+    """Ticket data structure."""
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(..., min_length=1)
+    priority: str = Field(..., pattern="^(low|medium|high)$")
+    category: str = Field(..., pattern="^(bug|feature|question|other)$")
+
+
+class GenerateTicketRequest(BaseModel):
+    """Request model for generating a ticket."""
+    conversation_id: int | None = None
+
+
+class GenerateTicketResponse(BaseModel):
+    """Response model for generated ticket."""
+    ticket: TicketData
+
+
+class SubmitTicketRequest(BaseModel):
+    """Request model for submitting a ticket."""
+    conversation_id: int | None = None
+    ticket: TicketData
+
+
+class SubmitTicketResponse(BaseModel):
+    """Response model for submitted ticket."""
+    success: bool
+    ticket_id: int | None = None
+    ticket_url: str | None = None
+    message: str
 
 
 @router.post("/")
@@ -82,7 +115,7 @@ async def chat_endpoint(
         # Create new conversation
         first_prompt = payload.question.strip()
         title = (first_prompt[:10] + "…") if len(first_prompt) > 10 else first_prompt
-        conv = Conversation(title=title or time.strftime("%Y-%m-%d %H:%M"), user_id=current_user.id)
+        conv = Conversation(title=title or time.strftime("%Y-%m-%d %H:%M"), user_id=current_user.id, workspace_id=current_user.current_workspace_id)
         session.add(conv)
         session.commit()
         session.refresh(conv)
@@ -99,6 +132,14 @@ async def chat_endpoint(
     session.add(msg)
     session.commit()
     session.refresh(msg)
+
+    if payload.is_system_message:
+        return {
+            "answer": "Your ticket has been created successfully. You will receive an update when it is processed. Thank you!",
+            "latency_ms": latency_ms, 
+            "message_id": msg.id, 
+            "conversation_id": conv_id
+        }
     
     # Convert retrieved docs info to RetrievedDocument objects for logging
     retrieved_docs = []
@@ -149,4 +190,145 @@ async def chat_endpoint(
         "latency_ms": latency_ms, 
         "message_id": msg.id, 
         "conversation_id": conv_id
-    } 
+    }
+
+
+@router.post("/generate-ticket", response_model=GenerateTicketResponse)
+async def generate_ticket_endpoint(
+    payload: GenerateTicketRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Generate a support ticket from a conversation using AI analysis.
+    
+    Args:
+        payload: Request containing conversation_id (optional)
+        current_user: The authenticated user making the request
+        session: Database session
+        
+    Returns:
+        Generated ticket data with title, description, priority, and category
+    """
+    logger.info(f"Generating ticket for user {current_user.id}, conversation: {payload.conversation_id}")
+    
+    # If no conversation_id provided, return a template
+    if payload.conversation_id is None:
+        return GenerateTicketResponse(
+            ticket=TicketData(
+                title="New Support Ticket",
+                description="Please describe your issue in detail...",
+                priority="medium",
+                category="question"
+            )
+        )
+    
+    # Verify conversation exists and belongs to user
+    conversation = session.get(Conversation, payload.conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if conversation.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied to this conversation")
+    
+    # Retrieve all messages from the conversation
+    messages = session.query(Message).filter(
+        Message.conversation_id == payload.conversation_id
+    ).order_by(Message.timestamp).all()
+    
+    if not messages:
+        raise HTTPException(status_code=400, detail="Conversation has no messages")
+    
+    # TODO: Replace this dummy implementation with actual LLM-based analysis
+    # For now, create a dummy ticket based on the first message
+    first_message = messages[0]
+    conversation_summary = f"{len(messages)} message(s) exchanged"
+    
+    # Dummy ticket generation (to be replaced with LLM logic)
+    dummy_ticket = TicketData(
+        title=f"Support Request: {first_message.question[:50]}..." if len(first_message.question) > 50 else f"Support Request: {first_message.question}",
+        description=f"User initiated a conversation with the following question:\n\n{first_message.question}\n\nConversation contains {conversation_summary}.\n\nLast response: {messages[-1].answer[:200]}..." if len(messages[-1].answer) > 200 else messages[-1].answer,
+        priority="medium",  # TODO: Determine based on conversation analysis
+        category="question"  # TODO: Categorize based on content analysis
+    )
+    
+    logger.info(f"Generated dummy ticket for conversation {payload.conversation_id}")
+    return GenerateTicketResponse(ticket=dummy_ticket)
+
+
+@router.post("/submit-ticket", response_model=SubmitTicketResponse)
+async def submit_ticket_endpoint(
+    payload: SubmitTicketRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Submit and create a support ticket in the database.
+    
+    Args:
+        payload: Request containing ticket data and optional conversation_id
+        current_user: The authenticated user making the request
+        session: Database session
+        
+    Returns:
+        Success response with ticket_id, ticket_url, and confirmation message
+    """
+    logger.info(f"Submitting ticket for user {current_user.id}, conversation: {payload.conversation_id}")
+    
+    try:
+        # Verify conversation exists if provided
+        if payload.conversation_id is not None:
+            conversation = session.get(Conversation, payload.conversation_id)
+            if not conversation:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            
+            if conversation.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied to this conversation")
+        
+        # Validate priority and category
+        valid_priorities = ["low", "medium", "high"]
+        valid_categories = ["bug", "feature", "question", "other"]
+        
+        if payload.ticket.priority not in valid_priorities:
+            raise HTTPException(status_code=400, detail=f"Invalid priority. Must be one of: {', '.join(valid_priorities)}")
+        
+        if payload.ticket.category not in valid_categories:
+            raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {', '.join(valid_categories)}")
+        
+        # Create the ticket
+        new_ticket = Ticket(
+            conversation_id=payload.conversation_id,
+            user_id=current_user.id,
+            title=payload.ticket.title,
+            description=payload.ticket.description,
+            priority=payload.ticket.priority,
+            category=payload.ticket.category,
+            status="open"
+        )
+        
+        session.add(new_ticket)
+        session.commit()
+        session.refresh(new_ticket)
+        
+        # Generate ticket URL (modify based on your actual support system URL structure)
+        ticket_url = f"https://support.yourapp.com/tickets/{new_ticket.id}"
+        
+        logger.info(f"Successfully created ticket {new_ticket.id} for user {current_user.id}")
+        
+        return SubmitTicketResponse(
+            success=True,
+            ticket_id=new_ticket.id,
+            ticket_url=ticket_url,
+            message=f"✅ Your support ticket has been successfully created! You can follow its status at: {ticket_url}"
+        )
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error creating ticket: {e}")
+        return SubmitTicketResponse(
+            success=False,
+            message="We encountered an error while creating your ticket. Please try again or contact support@yourapp.com"
+        )
+ 

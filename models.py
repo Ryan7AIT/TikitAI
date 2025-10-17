@@ -197,4 +197,21 @@ class FeedbackComment(SQLModel, table=True):
     votes: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    deleted_at: Optional[datetime] = Field(default=None) 
+    deleted_at: Optional[datetime] = Field(default=None)
+
+
+# ----------------------------- Support Ticket System ----------------------------- #
+
+class Ticket(SQLModel, table=True):
+    """Support tickets created from user conversations or manually"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    conversation_id: Optional[int] = Field(default=None, foreign_key="conversation.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    title: str = Field(max_length=200)
+    description: str = Field(sa_column=Column(TEXT))
+    priority: str = Field(max_length=20, index=True)  # "low", "medium", "high"
+    category: str = Field(max_length=50, index=True)  # "bug", "feature", "question", "other"
+    status: str = Field(default="open", max_length=50, index=True)  # "open", "in_progress", "resolved", "closed"
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    resolved_at: Optional[datetime] = Field(default=None) 
