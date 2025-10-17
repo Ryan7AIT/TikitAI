@@ -27,7 +27,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        # allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        allow_methods=["*"],
         allow_headers=["*"],
     )
     
@@ -93,6 +94,7 @@ def include_routers(app: FastAPI):
     from routers.workspace_router import router as workspace_router
     from routers.feedback_router import router as feedback_router
     from routers.user_router import router as user_router
+    from routers.widget_router import router as widget_router
     
     app.include_router(auth_router)
     app.include_router(chat_router)
@@ -107,6 +109,7 @@ def include_routers(app: FastAPI):
     app.include_router(workspace_router)
     app.include_router(feedback_router)
     app.include_router(user_router)
+    app.include_router(widget_router)
     
     logger.info("All routers included")
 

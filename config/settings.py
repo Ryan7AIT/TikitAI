@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # API Configuration
     api_title: str = "RAG Chat API "
-    cors_origins: List[str] = ["http://localhost:4200"]
+    cors_origins: List[str] = ["http://localhost:4200","http://127.0.0.1:4200","null"]
     
     # File Configuration
     data_directory: str = "data"
@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     secret_key: str = "CHANGE_ME"  
     access_token_expire_minutes: int = 60  # 60 minutes (short-lived)
     refresh_token_expire_days: int = 30  # 30 days (long-lived)
+    
+    # Widget Configuration
+    widget_token_expire_days: int = 7  # 7 days for widget tokens
+    widget_session_timeout_minutes: int = 30  # Session timeout for inactive widget sessions
+    widget_max_sessions_per_bot: int = 1000  # Maximum concurrent sessions per bot
+    widget_allowed_origins: str = "*"  # Comma-separated CORS origins for widgets
+    widget_base_url: str = "http://localhost:8000"  # Base URL for widget embedding
     
     class Config:
         env_file = ".env"

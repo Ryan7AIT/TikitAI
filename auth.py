@@ -25,6 +25,7 @@ SECRET_KEY: str = settings.secret_key
 ALGORITHM: str = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES: int = settings.access_token_expire_minutes
 REFRESH_TOKEN_EXPIRE_DAYS: int = settings.refresh_token_expire_days
+WIDGET_TOKEN_EXPIRE_DAYS: int = settings.widget_token_expire_days
 
 
 def hash_password(password: str) -> str:
@@ -266,4 +267,281 @@ def cleanup_all_expired_tokens(session: Session) -> dict:
         "expired_tokens_deleted": expired_count,
         "old_inactive_tokens_deleted": inactive_count,
         "total_cleaned": expired_count + inactive_count
-    } 
+    }
+
+
+# ----------------------------- Widget Token Functions ----------------------------- #
+
+def create_widget_token(bot_id: int, owner_id: int, session: Session) -> str:
+    """
+    Create a signed JWT widget token for embedding on external websites.
+    
+    Args:
+        bot_id: The ID of the bot this token is for
+        owner_id: The ID of the user who owns the bot
+        session: Database session
+        
+    Returns:
+        A signed JWT token string
+    """
+    from models import WidgetToken
+    
+    # Clean up expired widget tokens for this bot
+    cleanup_expired_widget_tokens(bot_id, session)
+    
+    # Generate token
+    token = secrets.token_urlsafe(32)
+    
+    # Create JWT with widget-specific claims
+    expires_at = datetime.utcnow() + timedelta(days=WIDGET_TOKEN_EXPIRE_DAYS)
+    to_encode = {
+        "sub": str(owner_id),
+        "bot_id": bot_id,
+        "type": "widget",
+        "exp": expires_at,
+        "iat": datetime.utcnow()
+    }
+    
+    jwt_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    
+    # Hash and store in database
+    token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
+    
+    widget_token_record = WidgetToken(
+        bot_id=bot_id,
+        owner_id=owner_id,
+        token_hash=token_hash,
+        expires_at=expires_at
+    )
+    
+    session.add(widget_token_record)
+    session.commit()
+    
+    return jwt_token
+
+
+def verify_widget_token(token: str, session: Session) -> Optional[dict]:
+    """
+    Verify a widget token and return its payload if valid.
+    
+    Args:
+        token: The JWT widget token to verify
+        session: Database session
+        
+    Returns:
+        Token payload dict if valid, None otherwise
+    """
+    from models import WidgetToken
+    
+    try:
+        # Decode JWT
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        # Verify it's a widget token
+        if payload.get("type") != "widget":
+            return None
+        
+        # Verify token exists in database and is active
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        
+        widget_token_record = session.exec(
+            select(WidgetToken).where(
+                WidgetToken.token_hash == token_hash,
+                WidgetToken.is_active == True,
+                WidgetToken.expires_at > datetime.utcnow()
+            )
+        ).first()
+        
+        if not widget_token_record:
+            return None
+        
+        # Update last_used_at timestamp
+        widget_token_record.last_used_at = datetime.utcnow()
+        session.add(widget_token_record)
+        session.commit()
+        
+        return payload
+        
+    except JWTError:
+        return None
+
+
+def invalidate_widget_token(token: str, session: Session) -> bool:
+    """
+    Invalidate a specific widget token.
+    
+    Args:
+        token: The JWT widget token to invalidate
+        session: Database session
+        
+    Returns:
+        True if token was invalidated, False otherwise
+    """
+    from models import WidgetToken
+    
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    
+    widget_token_record = session.exec(
+        select(WidgetToken).where(
+            WidgetToken.token_hash == token_hash,
+            WidgetToken.is_active == True
+        )
+    ).first()
+    
+    if widget_token_record:
+        widget_token_record.is_active = False
+        session.commit()
+        return True
+    
+    return False
+
+
+def invalidate_all_bot_tokens(bot_id: int, session: Session) -> int:
+    """
+    Invalidate all widget tokens for a specific bot.
+    
+    Args:
+        bot_id: The ID of the bot
+        session: Database session
+        
+    Returns:
+        Number of tokens invalidated
+    """
+    from models import WidgetToken
+    
+    bot_tokens = session.exec(
+        select(WidgetToken).where(
+            WidgetToken.bot_id == bot_id,
+            WidgetToken.is_active == True
+        )
+    ).all()
+    
+    count = len(bot_tokens)
+    
+    for token in bot_tokens:
+        token.is_active = False
+        session.add(token)
+    
+    session.commit()
+    
+    return count
+
+
+def cleanup_expired_widget_tokens(bot_id: int, session: Session) -> None:
+    """
+    Clean up expired widget tokens for a specific bot.
+    
+    Args:
+        bot_id: The ID of the bot
+        session: Database session
+    """
+    from models import WidgetToken
+    
+    # Delete expired tokens
+    expired_tokens = session.exec(
+        select(WidgetToken).where(
+            WidgetToken.bot_id == bot_id,
+            WidgetToken.expires_at < datetime.utcnow()
+        )
+    ).all()
+    
+    for token in expired_tokens:
+        session.delete(token)
+    
+    # Delete old inactive tokens (older than 30 days)
+    old_inactive = session.exec(
+        select(WidgetToken).where(
+            WidgetToken.bot_id == bot_id,
+            WidgetToken.is_active == False,
+            WidgetToken.created_at < datetime.utcnow() - timedelta(days=30)
+        )
+    ).all()
+    
+    for token in old_inactive:
+        session.delete(token)
+    
+    session.commit()
+
+
+def get_widget_token_from_request(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Dependency to extract and verify widget token from request.
+    
+    Args:
+        credentials: HTTP Bearer credentials
+        session: Database session
+        
+    Returns:
+        Widget token payload
+        
+    Raises:
+        HTTPException: If token is invalid or expired
+    """
+    token = credentials.credentials
+    payload = verify_widget_token(token, session)
+    
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired widget token"
+        )
+    
+    return payload
+
+
+def refresh_widget_token(old_token: str, session: Session) -> Optional[str]:
+    """
+    Refresh an expired widget token if it's still within grace period.
+    
+    Args:
+        old_token: The expired widget token
+        session: Database session
+        
+    Returns:
+        New JWT token if successful, None otherwise
+    """
+    from models import WidgetToken, Bot
+    
+    try:
+        # Decode without verification to get payload (even if expired)
+        payload = jwt.decode(old_token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+        
+        # Verify it's a widget token
+        if payload.get("type") != "widget":
+            return None
+        
+        bot_id = payload.get("bot_id")
+        owner_id = int(payload.get("sub"))
+        
+        # Verify old token exists in database
+        old_token_hash = hashlib.sha256(old_token.encode()).hexdigest()
+        old_widget_token = session.exec(
+            select(WidgetToken).where(
+                WidgetToken.token_hash == old_token_hash,
+                WidgetToken.is_active == True
+            )
+        ).first()
+        
+        if not old_widget_token:
+            return None
+        
+        # Verify bot is still active
+        bot = session.get(Bot, bot_id)
+        if not bot or not bot.is_active:
+            return None
+        
+        # Deactivate old token
+        old_widget_token.is_active = False
+        session.add(old_widget_token)
+        session.commit()
+        
+        # Create new token
+        new_token = create_widget_token(bot_id, owner_id, session)
+        
+        return new_token
+        
+    except JWTError:
+        return None 

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Widget Demo - Test Page</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #1f2937;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .header p {
+            color: #6b7280;
+            font-size: 1.2em;
+            margin-bottom: 20px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .content {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+
+        .content h2 {
+            color: #1f2937;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+
+        .content p {
+            color: #4b5563;
+            line-height: 1.8;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .feature-card {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 30px;
+            border: 2px solid #e5e7eb;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            border-color: #667eea;
+        }
+
+        .feature-card h3 {
+            color: #1f2937;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+
+        .feature-card p {
+            color: #6b7280;
+            font-size: 1em;
+            margin: 0;
+        }
+
+        .cta-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            padding: 40px;
+            color: white;
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .cta-box h2 {
+            font-size: 2em;
+            margin-bottom: 15px;
+        }
+
+        .cta-box p {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-bottom: 25px;
+        }
+
+        .btn {
+            display: inline-block;
+            background: white;
+            color: #667eea;
+            padding: 15px 40px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.1em;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .instructions {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .instructions h3 {
+            color: #92400e;
+            margin-bottom: 10px;
+        }
+
+        .instructions p {
+            color: #78350f;
+            margin: 5px 0;
+        }
+
+        .instructions code {
+            background: #fde68a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            padding: 20px;
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .header p {
+                font-size: 1em;
+            }
+
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Chat Widget Demo</h1>
+            <p>Experience our intelligent chatbot in action</p>
+            <span class="badge">✨ Powered by RAG Technology</span>
+        </div>
+
+        <div class="content">
+            <h2>Welcome to the Widget Demo!</h2>
+            <p>
+                This page demonstrates how our embeddable chat widget works on any website.
+                The widget appears as a chat bubble in the bottom-right corner of your screen.
+            </p>
+            <p>
+                Click on the chat bubble to start a conversation with our AI assistant.
+                The bot has access to your workspace knowledge base and can answer questions
+                intelligently using advanced RAG (Retrieval-Augmented Generation) technology.
+            </p>
+
+            <div class="instructions">
+                <h3>📝 Setup Instructions</h3>
+                <p><strong>Before the widget appears, you need to:</strong></p>
+                <p>1. Generate a widget token using: <code>POST /widget/generate</code></p>
+                <p>2. Replace <code>YOUR_WIDGET_TOKEN</code> in the script below</p>
+                <p>3. Replace <code>YOUR_BOT_ID</code> with your actual bot ID</p>
+                <p>4. Reload this page</p>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3>🚀 Easy Integration</h3>
+                    <p>Add one script tag to your website and you're done. No complex setup required.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>🎨 Customizable</h3>
+                    <p>Match your brand with custom colors, themes, and positioning options.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>📱 Responsive</h3>
+                    <p>Works seamlessly on desktop, tablet, and mobile devices.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>🔐 Secure</h3>
+                    <p>JWT-based authentication ensures only authorized access to your bot.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>💬 Smart Conversations</h3>
+                    <p>Maintains conversation context and provides intelligent responses.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>📊 Analytics</h3>
+                    <p>Track sessions, messages, and user interactions in real-time.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="cta-box">
+            <h2>Ready to Try?</h2>
+            <p>Click the chat bubble in the bottom-right corner to start chatting!</p>
+            <button class="btn" onclick="window.ChatWidget && window.ChatWidget.toggle()">
+                Open Chat Widget
+            </button>
+        </div>
+
+        <footer>
+            <p>Built with ❤️ using FastAPI, RAG, and modern web technologies</p>
+            <p>&copy; 2025 Your SaaS Platform. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <!-- 
+        ============================================
+        CHAT WIDGET - REPLACE WITH YOUR CREDENTIALS
+        ============================================
+        
+        Instructions:
+        1. Replace YOUR_WIDGET_TOKEN with your actual token from /widget/generate
+        2. Replace YOUR_BOT_ID with your bot ID
+        3. Update the data-api-base URL if your API is not at localhost:8000
+    -->
+    <script src="http://localhost:4200/static/widget.js" data-bot-id="1"
+        data-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiYm90X2lkIjoxLCJ0eXBlIjoid2lkZ2V0IiwiZXhwIjoxNzYxMzIxMzk1LCJpYXQiOjE3NjA3MTY1OTV9.o2tIBSae5woZHE0eLCbaK-GOG5T4w9vmgrNtEbRgEuY"
+        data-api-base="http://localhost:8000/widget">
+        </script>
+
+    <!-- 
+        CUSTOMIZATION OPTIONS:
+        
+        data-theme: "light" or "dark"
+        data-position: "bottom-right", "bottom-left", "top-right", "top-left"
+        data-primary-color: Any hex color (e.g., "#3b82f6")
+        data-bubble-icon: Any emoji or icon character
+        
+        Example with dark theme and custom color:
+        <script src="http://localhost:8000/static/widget.js" 
+                data-bot-id="1" 
+                data-token="eyJhbGc..."
+                data-theme="dark"
+                data-primary-color="#8b5cf6"
+                data-bubble-icon="🤖">
+        </script>
+    -->
+</body>
+
+</html>

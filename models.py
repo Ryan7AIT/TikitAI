@@ -50,6 +50,7 @@ class Message(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     conversation_id: Optional[int] = Field(default=None, foreign_key="conversation.id")
+    chat_session_id: Optional[int] = Field(default=None, foreign_key="chatsession.id", index=True)  # For widget sessions
     feedback: Optional[str] = Field(default=None)
 
 
@@ -214,4 +215,43 @@ class Ticket(SQLModel, table=True):
     status: str = Field(default="open", max_length=50, index=True)  # "open", "in_progress", "resolved", "closed"
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    resolved_at: Optional[datetime] = Field(default=None) 
+    resolved_at: Optional[datetime] = Field(default=None)
+
+
+# ----------------------------- Widget System ----------------------------- #
+
+class Bot(SQLModel, table=True):
+    """Chatbots that can be embedded on external websites via widgets"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=200, index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(TEXT))
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    owner_id: int = Field(foreign_key="user.id", index=True)
+    system_prompt: Optional[str] = Field(default=None, sa_column=Column(TEXT))
+    is_active: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class WidgetToken(SQLModel, table=True):
+    """JWT tokens for authenticating widget requests from external websites"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bot_id: int = Field(foreign_key="bot.id", index=True)
+    owner_id: int = Field(foreign_key="user.id", index=True)
+    token_hash: str = Field(index=True)  # SHA256 hash of the JWT token
+    expires_at: datetime = Field(index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    is_active: bool = Field(default=True, index=True)
+    last_used_at: Optional[datetime] = Field(default=None, index=True)
+
+
+class ChatSession(SQLModel, table=True):
+    """Chat sessions initiated by external website visitors via widgets"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bot_id: int = Field(foreign_key="bot.id", index=True)
+    session_token: str = Field(unique=True, index=True)  # Unique identifier for session
+    visitor_identifier: Optional[str] = Field(default=None, index=True)  # Optional visitor ID
+    started_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    last_activity_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    messages_count: int = Field(default=0)
+    is_active: bool = Field(default=True, index=True) 
